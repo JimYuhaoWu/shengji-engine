@@ -87,24 +87,60 @@ DEALING → TRUMP_DECLARATION → KITTY → CALL_HELPER → TRICK_PLAYING → SC
 
 ## Legal Action Rules (implement in rules.py)
 
+### Card Combinations
+
+- **Single**: any one card
+- **Pair**: two identical cards (same rank and suit, any deck_id)
+- **Trio**: three identical cards (same rank and suit, any deck_id)
+- **Tractor**: two or more consecutive pairs of the same suit
+  - "Consecutive" means adjacent in the suit's rank ordering (skipping trump level cards)
+  - Pairs that span trump/non-trump boundary are NOT tractors
+  - Example: if 7 is trump level, ♦6-♦7 is not a tractor (spans boundary)
+- **Limo**: two or more consecutive trios of the same suit
+  - Same consecutiveness rules as tractors
+- **Multi-card throws**: any combination in one suit when leading (e.g. pair + single, trio + two singles, tractor + single)
+
 ### During TRICK_PLAYING
 
 **Leading a trick:**
 - Any single card
 - Any pair of identical cards
+- Any trio of identical cards
 - Any tractor (2+ consecutive pairs, same suit)
-- Any multi-component combination (e.g. pair + single of same suit) — called a "throw"
-  - Throw is only legal if opponents cannot beat ANY component of it
+- Any limo (2+ consecutive trios, same suit)
+- Any multi-component combination in one suit (e.g. pair + single, tractor + singles)
 
 **Following a trick:**
-1. Must follow the led suit if possible, matching combination structure and card count
-2. If cannot follow suit completely, must use trump if possible
-3. If cannot use trump, play any cards (count must match trick size)
+Priority order:
+1. **Suit is the first priority**: must follow the led suit if you have cards of that suit
+2. **Combination matching is the second priority**: within the suit, match the combination structure if able
 
-**Tractor definition:**
-- Consecutive pairs in the same suit
-- "Consecutive" means adjacent in the suit's rank ordering (skipping trump level cards)
-- Pairs that span trump/non-trump boundary are NOT tractors
+If you do not have the led suit:
+- You may choose to **trump**, which is a higher play
+- Or you may choose **not to trump**, which is a lower play
+- Play any cards matching the trick size
+
+**How to match the leader's combination (when you have the led suit):**
+1. **If single is led**: play a single
+2. **If pair is led**: 
+   - Play a pair if you have one, else play singles
+3. **If trio is led**: 
+   - Play a trio if you have one, else
+   - Play a pair plus a single, else
+   - Play three singles
+4. **If tractor is led**:
+   - Play a tractor if you have one, else
+   - Play two pairs, else
+   - Play one pair plus two singles, else
+   - Play four singles
+5. **If limo is led**:
+   - Play a limo, else
+   - Play two trios, else
+   - Play a trio plus a pair plus a single, else
+   - Play a tractor plus two singles, else
+   - Play two pairs plus two singles, else
+   - Play a pair plus four singles, else
+   - Play six singles
 
 **Trick winner:**
 - Highest card of led suit wins, UNLESS

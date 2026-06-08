@@ -20,8 +20,9 @@ A Python library implementing the complete game logic for 拖拉机 as played by
 - Helpers are not publicly known until they reveal themselves by playing the called card
 
 ### Decks
-- 3 standard decks (156 cards + 6 Jokers = 162 cards total... adjust per house rules)
+- **Three decks total**: 156 standard cards (52 per deck) + 6 Jokers (2 per deck) = 162 cards
 - Each deck: 52 standard cards + 2 Jokers (small/large)
+- Each card has a deck_id (0, 1, or 2) to distinguish duplicates
 
 ### Level System
 - 11 levels per round: `2, 4, 6, 7, 8, 9, 10, J, Q, K, A` (3 and 5 excluded from levels)
@@ -35,18 +36,32 @@ A Python library implementing the complete game logic for 拖拉机 as played by
 - Trump rank within trump suit: Small Joker < Large Joker < Level card of trump suit < Level card of other suits < A < K < ... (of trump suit)
 - Non-trump suits rank normally within themselves
 
-### Card Combinations (legal plays)
+### Card Combinations
 - **Single**: any one card
-- **Pair**: two identical cards
+- **Pair**: two identical cards (same rank and suit)
+- **Trio**: three identical cards (same rank and suit)
 - **Tractor (拖拉机)**: two or more consecutive pairs of same suit (e.g. 77-88, JJ-QQ-KK)
-- **Multi-card throw**: any combination of the above in one suit, when leading a trick
+- **Limo (跳)**: two or more consecutive trios of same suit (e.g. 777-888, JJJ-QQQ-KKK)
+- **Multi-card throw**: any combination of singles, pairs, or tractors in one suit (when leading)
 
 ### Trick Rules
-- Leader plays any legal combination
-- Others must follow suit if able, matching the combination type and length
-- If unable to follow, must play trump if able
-- If unable to trump, play anything
-- Highest card/combo of led suit wins, unless trumped
+- **Number of tricks per game**: not fixed; game continues until all legal plays are exhausted or all players pass
+- **Suit priority**: always attempt to follow the led suit first
+- **Combination priority**: within the led suit, match the combination structure if able
+
+**When you have the led suit:**
+- If single is led: play a single
+- If pair is led: play a pair if any, else play singles
+- If trio is led: play a trio if any, else a pair+single, else three singles
+- If tractor is led: play a tractor if any, else two pairs, else a pair+two singles, else four singles
+- If limo is led: play a limo, else two trios, else a trio+pair+single, else a tractor+two singles, else two pairs+two singles, else a pair+four singles, else six singles
+
+**If you don't have the led suit:**
+- You may choose to **trump** (higher-ranking play)
+- Or choose **not to trump** (lower-ranking play)
+- Either way, play cards totaling the trick size
+
+**Trick winner**: highest card of led suit wins, unless trump was played, then highest trump wins
 
 ### Scoring
 - Scoring cards: 5 (5 pts), 10 (10 pts), K (10 pts)
