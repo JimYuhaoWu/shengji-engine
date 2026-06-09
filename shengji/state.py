@@ -30,9 +30,9 @@ class GameState:
 
     # Trump declaration bidding (during TRUMP_DECLARATION phase)
     current_trump_bid: Optional[TrumpBid] = None  # Highest bid so far
-    passed_players: Tuple[int, ...] = ()  # Players who have passed
+    passed_players: Tuple[int, ...] = ()  # Players who formally passed (after dealing done)
     trump_bids_history: Tuple[TrumpBid, ...] = ()  # All bids made in order
-    bidding_ended: bool = False  # True when all pass or count==3, but dealing continues to 26
+    formal_bidding_started: bool = False  # True after all 26 cards dealt, when formal passing begins
 
     # Buried cards (during and after KITTY phase)
     buried_cards: Tuple[Card, ...] = ()  # 6 cards buried by dealer, revealed at end
@@ -72,7 +72,7 @@ class GameState:
             'current_trump_bid': self.current_trump_bid,
             'passed_players': self.passed_players,
             'trump_bids_history': self.trump_bids_history,
-            'bidding_ended': self.bidding_ended,
+            'formal_bidding_started': self.formal_bidding_started,
             'buried_cards': self.buried_cards,
             'called_rank': self.called_rank,
             'called_suit': self.called_suit,
