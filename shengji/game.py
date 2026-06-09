@@ -376,10 +376,10 @@ class Game:
             elif action.action_type == ActionType.PLAY_CARDS:
                 new_state = self._handle_play_cards(state, action)
 
-        # After any action during DEALING phase, deal more cards if needed
-        if new_state.phase == GamePhase.DEALING and new_state.cards_dealt < 26:
-            # Keep dealing cards
-            new_state = self._deal_next_round(new_state)
+        # Note: dealing during the DEALING phase is driven by the action handlers
+        # (_handle_bid_trump / _handle_pass_trump) and the action=None auto-deal
+        # branch above, each of which deals exactly one round. We must NOT deal
+        # again here or each step would advance dealing by two rounds.
 
         info = {
             "phase": new_state.phase,
@@ -980,15 +980,17 @@ class Game:
                     legal_plays.append((card,))
 
             elif led_combo_type == "pair":
-                # Pair → singles
+                # Pair → a pair if any, else two singles of the led suit.
+                # Must always play trick_size (2) cards to keep hand sizes in sync.
                 pairs = self._find_pairs_in_suit(led_suit_cards)
                 if pairs:
-                    for pair in pairs:
-                        legal_plays.extend([tuple(p) for p in pairs])
-                        break  # Only add each pair type once
-                else:
-                    for card in led_suit_cards:
-                        legal_plays.append((card,))
+                    legal_plays.extend([tuple(p) for p in pairs])
+                elif len(led_suit_cards) >= 2:
+                    # No pair available but enough led-suit cards: play any two singles
+                    for combo in combinations(led_suit_cards, 2):
+                        legal_plays.append(combo)
+                # If only 1 led-suit card, the insufficient-led-suit fill branch below
+                # handles it (play the single + one card of another suit).
 
             elif led_combo_type == "trio":
                 # Trio → pair+single → three singles
@@ -1102,7 +1104,16 @@ class Game:
                 for combo in combinations(hand, trick_size):
                     legal_plays.append(combo)
 
-        return legal_plays if legal_plays else [(hand[0],)] if hand else [()]
+        if legal_plays:
+            return legal_plays
+
+        # Safety fallback: always play exactly trick_size cards to keep hand
+        # sizes synchronized across players. This should rarely trigger.
+        if len(hand) >= trick_size:
+            return [combo for combo in combinations(hand, trick_size)]
+        elif hand:
+            return [tuple(hand)]
+        return [()]
 
     def _find_pairs_in_suit(self, cards: list) -> List[List[Card]]:
         """Find all pairs in a list of cards (same rank and suit)."""

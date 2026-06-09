@@ -2,7 +2,7 @@
 
 import pytest
 from shengji.game import Game
-from shengji.types import GamePhase
+from shengji.types import GamePhase, ActionType
 
 
 class TestGame:
@@ -30,12 +30,37 @@ class TestGame:
         assert state.dealer_id == 0
         assert state.is_valid()
 
-    def test_reset_deals_cards_correctly(self):
-        """reset() deals 26 cards to each player and 6 to kitty."""
+    def test_reset_deals_one_round(self):
+        """reset() deals the first round (one card per player) under parallel dealing."""
         game = Game(num_players=6)
         state = game.reset()
 
-        # Each player should have 26 cards
+        # After reset, exactly one round dealt: 1 card per player
+        assert state.cards_dealt == 1
+        for i, hand in enumerate(state.hands):
+            assert len(hand) == 1, f"Player {i} has {len(hand)} cards, expected 1"
+
+        # All 162 cards accounted for between hands, kitty, and remaining deck
+        total = sum(len(hand) for hand in state.hands) + len(state.kitty) + len(state.deck)
+        assert total == 162
+
+    def test_full_dealing_distributes_correctly(self):
+        """Dealing all 26 rounds gives 26 cards/player, 6 to kitty, 162 total."""
+        game = Game(num_players=6)
+        state = game.reset()
+
+        # Auto-deal (passing) until all 26 cards are dealt and formal bidding begins
+        guard = 0
+        while state.cards_dealt < 26 and guard < 200:
+            # Pass each round so dealing continues without bids
+            pass_action = next(
+                (a for a in state.legal_actions if a.action_type == ActionType.PASS_TRUMP),
+                None,
+            )
+            state, _ = game.step(state, pass_action)
+            guard += 1
+
+        # Each player should now have 26 cards
         for i, hand in enumerate(state.hands):
             assert len(hand) == 26, f"Player {i} has {len(hand)} cards, expected 26"
 
@@ -45,6 +70,10 @@ class TestGame:
         # Total should be 162 (26*6 + 6)
         total = sum(len(hand) for hand in state.hands) + len(state.kitty)
         assert total == 162
+
+        # After all cards dealt, formal bidding phase has begun
+        assert state.formal_bidding_started
+        assert state.phase == GamePhase.TRUMP_DECLARATION
 
     def test_reset_initializes_all_players_at_r1_2(self):
         """reset() sets all players to R1:2 level."""
