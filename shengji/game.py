@@ -1,12 +1,14 @@
 """Main game engine orchestrator."""
 
 import random
-from typing import List, Tuple
-from .card import Card, Deck
-from .level import LEVEL_SEQ
+from typing import Dict, List, Optional, Tuple
+from .card import Card, Deck, count_identical_cards, get_identical_cards
+from .level import LEVEL_SEQ, step_level
 from .state import GameState
-from .types import GamePhase, Suit, Rank, Action, ActionType
-from .trump import is_level_card
+from .types import GamePhase, Suit, Rank, Action, ActionType, TrickCombination
+from .trump import is_level_card, is_trump, compare_cards, winning_card
+from .rules import CardCombination, get_card_combinations, can_follow_suit, can_trump, get_legal_plays_when_following
+from .scoring import compute_farmer_score, compute_level_changes, count_red_fives, apply_level_changes
 
 
 class Game:
@@ -61,23 +63,56 @@ class Game:
             tricks_won=(),
             player_levels=player_levels,
             scores=tuple(0 for _ in range(6)),
-            legal_actions=self._get_legal_actions_dealing(hands_tuple),
+            legal_actions=(),
         )
 
-        return state
+        # Generate legal actions for first player
+        legal_actions = self._get_legal_actions(state)
+        return state.copy(legal_actions=legal_actions)
 
-    def _get_legal_actions_dealing(self, hands: Tuple[Tuple[Card, ...], ...]) -> Tuple[Action, ...]:
+    def _get_legal_actions(self, state: GameState) -> Tuple[Action, ...]:
+        """Get legal actions for current state."""
+        if state.phase == GamePhase.DEALING:
+            return self._get_legal_actions_dealing(state)
+        elif state.phase == GamePhase.TRUMP_DECLARATION:
+            return self._get_legal_actions_trump_declaration(state)
+        elif state.phase == GamePhase.KITTY:
+            return self._get_legal_actions_kitty(state)
+        elif state.phase == GamePhase.CALL_HELPER:
+            return self._get_legal_actions_call_helper(state)
+        elif state.phase == GamePhase.TRICK_PLAYING:
+            return self._get_legal_actions_trick_playing(state)
+        elif state.phase == GamePhase.SCORING:
+            return ()  # No actions in scoring phase
+        else:
+            return ()
+
+    def _get_legal_actions_dealing(self, state: GameState) -> Tuple[Action, ...]:
         """Get legal trump declaration actions during DEALING phase."""
-        player_hand = hands[0]  # Start with player 0
+        player_hand = state.hands[state.current_player]
+        level_key = state.player_levels[state.current_player]
+        level_rank = level_key.split(":")[1]
+
         actions: List[Action] = []
 
-        # Can declare any level card in hand
-        for card in player_hand:
-            if is_level_card(card, card.rank.value):
+        # Can declare level cards of any suit
+        level_cards = [c for c in player_hand if is_level_card(c, level_rank)]
+
+        # Group by suit
+        suits_with_level = {}
+        for card in level_cards:
+            if card.suit not in suits_with_level:
+                suits_with_level[card.suit] = []
+            suits_with_level[card.suit].append(card)
+
+        # For each suit, can bid with 1, 2, or 3 cards
+        for suit, cards in suits_with_level.items():
+            for num_cards in range(1, min(len(cards) + 1, 4)):  # Max 3 cards
+                bid_cards = tuple(cards[:num_cards])
                 actions.append(Action(
                     action_type=ActionType.DECLARE_TRUMP,
-                    cards=(card,),
-                    target_suit=card.suit,
+                    cards=bid_cards,
+                    target_suit=suit,
                 ))
 
         # Can also pass
@@ -85,14 +120,213 @@ class Game:
 
         return tuple(actions)
 
-    def step(self, action: Action) -> Tuple[GameState, dict]:
+    def _get_legal_actions_trump_declaration(self, state: GameState) -> Tuple[Action, ...]:
+        """Get legal trump declaration actions (continuation of auction)."""
+        return self._get_legal_actions_dealing(state)
+
+    def _get_legal_actions_kitty(self, state: GameState) -> Tuple[Action, ...]:
+        """Get legal swap actions for dealer during kitty phase."""
+        # Dealer can swap any cards from hand with kitty
+        # For simplicity, return all possible swaps (this would be huge in practice)
+        # In a real game, would need to limit to reasonable number of combinations
+        player_hand = state.hands[state.dealer_id]
+
+        actions: List[Action] = []
+
+        # Simple version: return all 6 cards as a single action (swap entire hand possible cards)
+        # For now, implement just the "no swap" action to move forward
+        actions.append(Action(action_type=ActionType.TAKE_KITTY, cards=(), target_suit=None))
+
+        return tuple(actions)
+
+    def _get_legal_actions_call_helper(self, state: GameState) -> Tuple[Action, ...]:
+        """Get legal helper card calling actions for dealer."""
+        # Dealer can call any non-trump card from the deck
+        actions: List[Action] = []
+
+        # Collect all possible cards (non-trump) that could be called
+        for suit in [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]:
+            for rank in Rank:
+                if rank == Rank.LARGE_JOKER or rank == Rank.SMALL_JOKER:
+                    continue
+                card = Card(suit, rank, 0)
+                if not is_trump(card, state.trump_suit, state.player_levels[state.dealer_id].split(":")[1]):
+                    actions.append(Action(action_type=ActionType.CALL_HELPER, cards=(card,), target_suit=None))
+
+        return tuple(actions)
+
+    def _get_legal_actions_trick_playing(self, state: GameState) -> Tuple[Action, ...]:
+        """Get legal plays for current player in trick playing phase."""
+        player_hand = list(state.hands[state.current_player])
+        trick_size = 6
+
+        if not state.current_trick:
+            # Leading a trick - any combination is legal
+            combos = get_card_combinations(player_hand, state.trump_suit, state.player_levels[0].split(":")[1])
+            return tuple(
+                Action(action_type=ActionType.PLAY_CARDS, cards=combo.cards, target_suit=None)
+                for combo in combos
+            )
+
+        else:
+            # Following - must follow suit if possible
+            led_suit = state.current_trick[0][1][0].suit
+            led_count = len(state.current_trick[0][1])
+            led_type = TrickCombination.SINGLE  # Simplified
+
+            # Get legal following plays
+            plays = get_legal_plays_when_following(player_hand, CardCombination((Card(led_suit, Rank.TWO, 0),), TrickCombination.SINGLE), state.trump_suit, state.player_levels[0].split(":")[1])
+
+            return tuple(
+                Action(action_type=ActionType.PLAY_CARDS, cards=play.cards, target_suit=None)
+                for play in plays
+            )
+
+    def step(self, state: GameState, action: Action) -> Tuple[GameState, dict]:
         """Execute one action and return new state + info.
 
         Args:
+            state: Current game state
             action: Action to execute
 
         Returns:
             (new_state, info_dict)
         """
-        # This is a placeholder - full implementation will handle all phases
-        raise NotImplementedError("Game.step() not yet implemented")
+        new_state = state  # Will be overwritten
+
+        if action.action_type == ActionType.DECLARE_TRUMP:
+            new_state = self._handle_trump_declaration(state, action)
+        elif action.action_type == ActionType.TAKE_KITTY:
+            new_state = self._handle_kitty(state, action)
+        elif action.action_type == ActionType.CALL_HELPER:
+            new_state = self._handle_call_helper(state, action)
+        elif action.action_type == ActionType.PLAY_CARDS:
+            new_state = self._handle_play_cards(state, action)
+
+        info = {"phase": new_state.phase, "current_player": new_state.current_player}
+        return (new_state, info)
+
+    def _handle_trump_declaration(self, state: GameState, action: Action) -> GameState:
+        """Handle trump declaration action during DEALING/TRUMP_DECLARATION phases."""
+        # Record this declaration
+        declarations = list(state.trump_declarations)
+        declarations.append(action)
+
+        # Move to next player
+        next_player = (state.current_player + 1) % 6
+
+        # Check if all players have declared (including passes)
+        if len(declarations) >= 6:
+            # Trump declaration complete - find highest bid
+            winning_declaration = self._determine_winning_declaration(declarations)
+            trump_suit = winning_declaration.target_suit if winning_declaration else None
+            trump_declared_by = declarations.index(winning_declaration) if winning_declaration else 0
+
+            # Transition to KITTY phase
+            new_state = state.copy(
+                phase=GamePhase.KITTY,
+                current_player=state.dealer_id,
+                trump_suit=trump_suit,
+                trump_declarations=tuple(declarations),
+                trump_declared_by=trump_declared_by,
+                legal_actions=self._get_legal_actions_kitty(state),
+            )
+            return new_state
+
+        else:
+            # Continue to next player
+            new_state = state.copy(
+                current_player=next_player,
+                trump_declarations=tuple(declarations),
+                legal_actions=self._get_legal_actions_dealing(state.copy(current_player=next_player)),
+            )
+            return new_state
+
+    def _determine_winning_declaration(self, declarations: List[Action]) -> Optional[Action]:
+        """Determine the highest trump declaration."""
+        valid = [d for d in declarations if d.target_suit is not None]
+        if not valid:
+            return None
+        # Simple: highest number of cards, then first declarant
+        return max(valid, key=lambda d: (len(d.cards), -declarations.index(d)))
+
+    def _handle_kitty(self, state: GameState, action: Action) -> GameState:
+        """Handle kitty phase - dealer swaps cards."""
+        # For now, simplified: dealer keeps current hand
+        # In full version, would implement card swapping logic
+
+        # Transition to CALL_HELPER
+        new_state = state.copy(
+            phase=GamePhase.CALL_HELPER,
+            legal_actions=self._get_legal_actions_call_helper(state),
+        )
+        return new_state
+
+    def _handle_call_helper(self, state: GameState, action: Action) -> GameState:
+        """Handle call helper action."""
+        # Record the called card
+        helper_card = action.cards[0] if action.cards else None
+
+        # Transition to TRICK_PLAYING
+        new_state = state.copy(
+            phase=GamePhase.TRICK_PLAYING,
+            current_player=state.current_player,  # Will be set to lead player in trick playing
+            helper_card=helper_card,
+            legal_actions=self._get_legal_actions_trick_playing(state),
+        )
+        return new_state
+
+    def _handle_play_cards(self, state: GameState, action: Action) -> GameState:
+        """Handle play cards action during trick playing."""
+        # Record play in current trick
+        trick_play = (state.current_player, action.cards)
+        current_trick = state.current_trick + (trick_play,)
+
+        # If trick is complete (6 cards), determine winner and move to next trick
+        if len(current_trick) >= 6:
+            # Determine trick winner
+            winner = self._determine_trick_winner(current_trick, state)
+
+            # Update tricks won with scoring cards
+            trick_cards = tuple(c for _, cards in current_trick for c in cards)
+            tricks_won = state.tricks_won + (trick_cards,)
+
+            # Determine next player (winner leads)
+            next_player = current_trick[winner][0]
+
+            # Check if all cards played (26 tricks max)
+            cards_remaining = sum(len(h) for h in state.hands)
+            if cards_remaining <= 0:
+                # Game complete - transition to SCORING
+                new_state = state.copy(
+                    phase=GamePhase.SCORING,
+                    tricks_won=tricks_won,
+                    legal_actions=(),
+                )
+                return new_state
+
+            else:
+                # Continue to next trick
+                new_state = state.copy(
+                    current_player=next_player,
+                    current_trick=(),
+                    tricks_won=tricks_won,
+                    legal_actions=self._get_legal_actions_trick_playing(state.copy(current_player=next_player)),
+                )
+                return new_state
+
+        else:
+            # Continue trick with next player
+            next_player = (state.current_player + 1) % 6
+            new_state = state.copy(
+                current_player=next_player,
+                current_trick=current_trick,
+                legal_actions=self._get_legal_actions_trick_playing(state.copy(current_player=next_player, current_trick=current_trick)),
+            )
+            return new_state
+
+    def _determine_trick_winner(self, trick: Tuple[Tuple[int, Tuple[Card, ...]], ...], state: GameState) -> int:
+        """Determine which player won the trick (index in trick tuple)."""
+        # Simplified: just return index 0 for now
+        # Full implementation would compare cards using trump hierarchy
+        return 0
