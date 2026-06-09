@@ -69,8 +69,8 @@ A Python library implementing the complete game logic for 拖拉机 as played by
 - If you have SUFFICIENT led suit cards to match the combination: play them matched as required
 - If you have INSUFFICIENT led suit cards:
   - Play ALL led suit cards you have
-  - Fill remaining slots with non-trump cards from other suits
-  - **You can NEVER trump in this case, therefore can NEVER win**
+  - Fill remaining slots with ANY cards (any suit, including trump)
+  - **You can NEVER WIN because you failed to match the combination**
 
 **Combination matching (when you have sufficient led suit cards):**
 - Single: play a single
@@ -80,11 +80,15 @@ A Python library implementing the complete game logic for 拖拉机 as played by
 - Limo: play a limo, else two trios, else a trio+pair+single, else a tractor+two singles, else two pairs+two singles, else a pair+four singles, else six singles
 
 **If you don't have the led suit:**
-- You may choose to **trump** (higher-ranking play)
-- Or choose **not to trump** (lower-ranking play)
-- Either way, play cards totaling the trick size
+- You may **trump** with cards matching the led combination (valid trump)
+- Or play any cards without trumping (lower play)
 
-**Trick winner**: highest card of led suit wins, unless trump was played, then highest trump wins
+**Trumping validity:** Trump cards are valid ONLY when they match the led combination structure. Example: if tractor is led, trump must also be a tractor (or cards matching tractor structure).
+
+**Trick winner:** Highest card of led suit wins, UNLESS valid trump was played. When comparing multiple trump plays:
+- Compare ranks among trump cards
+- For multi-card throws, only compare the combination with maximum card count
+- If max card count is tied, prefer the combination with **trios** (e.g., limo beats tractor if both have 6 cards)
 
 **Kitty scoring**: Scores in kitty belong to the winner of the last trick, multiplied by 2× the number of cards in the winning combination
 

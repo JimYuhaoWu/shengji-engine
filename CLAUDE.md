@@ -151,9 +151,11 @@ Priority order:
   - You can NEVER trump in this case, therefore can NEVER win the trick
 
 **If you do not have the led suit:**
-- You may choose to **trump**, which is a higher play
-- Or you may choose **not to trump**, which is a lower play
-- Play any cards matching the trick size
+- You may **trump** with valid trump cards (must match led combination structure)
+- Or you may **not trump** and play other cards
+- Play cards totaling the trick size
+
+**Trump validity:** Trump cards are valid ONLY when they match the led combination. Invalid trump (not matching combination) is treated as a lower play.
 
 **How to match the leader's combination (when you have sufficient led suit cards):**
 1. **If single is led**: play a single
@@ -178,9 +180,14 @@ Priority order:
    - Play six singles
 
 **Trick winner:**
-- Highest card of led suit wins, UNLESS
-- A trump card was played, in which case highest trump wins
-- When comparing same-suit cards, use rank ordering for that suit under current trump
+1. If no valid trump was played: highest card of led suit wins
+2. If valid trump was played: compare trump plays as follows:
+   - **For single trump cards:** highest trump rank wins
+   - **For multi-card trump throws:** only compare the combination with maximum card count
+     - Example: tractor (4 cards) vs. tractor + single (5 cards) → compare 5-card combo
+     - If max card count is tied: prefer combo with trios (limo > tractor if both have 6 cards)
+     - Within same combo type: highest card rank wins
+   - **Invalid trump** (not matching led combination): treated as lower play, cannot win
 
 ## Trump Ordering (implement in trump.py)
 
