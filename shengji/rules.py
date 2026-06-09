@@ -635,7 +635,13 @@ def get_legal_trump_bids(hand: Tuple[Card, ...],
     valid_bids = []
 
     # Get level cards of the trump level from hand
-    level_rank = Rank(trump_level)
+    # Convert '10' to 'T' for Rank enum
+    rank_value = 'T' if trump_level == '10' else trump_level
+    try:
+        level_rank = Rank(rank_value)
+    except ValueError:
+        # Invalid trump level
+        return valid_bids
     level_cards = [c for c in hand if c.rank == level_rank]
 
     # Count identical cards by suit

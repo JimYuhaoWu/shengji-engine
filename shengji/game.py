@@ -363,17 +363,42 @@ class Game:
 
         if trump_locked:
             # Trump is locked - transition to KITTY phase immediately
-            # First, add kitty cards to dealer's hand
-            new_hands = self._add_kitty_to_dealer_hand(state)
+            # First ensure kitty is set up properly
+            kitty_state = state
+            if not state.kitty:
+                # Need to finish dealing and set up kitty
+                remaining_deck = list(state.deck)
+                # Finish dealing all cards to players
+                new_hands_list = list(state.hands)
+                for _ in range(26 - state.cards_dealt):
+                    for player_id in range(6):
+                        if remaining_deck:
+                            card = remaining_deck.pop(0)
+                            new_hands_list[player_id] = new_hands_list[player_id] + (card,)
 
-            new_state = state.copy(
+                # Extract last 6 cards as kitty
+                kitty_cards = tuple(remaining_deck[-6:]) if len(remaining_deck) >= 6 else tuple()
+                remaining_deck = remaining_deck[:-6] if len(remaining_deck) >= 6 else []
+
+                kitty_state = state.copy(
+                    hands=tuple(new_hands_list),
+                    kitty=kitty_cards,
+                    deck=tuple(remaining_deck),
+                    cards_dealt=26,
+                )
+
+            # Add kitty cards to dealer's hand
+            new_hands = self._add_kitty_to_dealer_hand(kitty_state)
+
+            new_state = kitty_state.copy(
                 phase=GamePhase.KITTY,
-                current_player=state.dealer_id,
+                current_player=kitty_state.dealer_id,
                 hands=new_hands,
                 trump_suit=new_trump_suit,
                 trump_locked=True,
                 current_trump_bid=bid,
                 trump_bids_history=new_bid_history,
+                kitty=(),  # Clear kitty (cards already in dealer's hand)
                 legal_actions=(),  # Will be set below
             )
             # Now get legal actions with updated hand
@@ -400,17 +425,42 @@ class Game:
         # Check if all players have passed
         if len(new_passed) >= 6:
             # All passed - use fallback rule: random card from kitty
-            trump_suit = self._resolve_trump_from_kitty(state)
+            # First ensure kitty is set up properly
+            kitty_state = state
+            if not state.kitty:
+                # Need to finish dealing and set up kitty
+                remaining_deck = list(state.deck)
+                # Finish dealing all cards to players
+                new_hands = list(state.hands)
+                for _ in range(26 - state.cards_dealt):
+                    for player_id in range(6):
+                        if remaining_deck:
+                            card = remaining_deck.pop(0)
+                            new_hands[player_id] = new_hands[player_id] + (card,)
+
+                # Extract last 6 cards as kitty
+                kitty_cards = tuple(remaining_deck[-6:]) if len(remaining_deck) >= 6 else tuple()
+                remaining_deck = remaining_deck[:-6] if len(remaining_deck) >= 6 else []
+
+                kitty_state = state.copy(
+                    hands=tuple(new_hands),
+                    kitty=kitty_cards,
+                    deck=tuple(remaining_deck),
+                    cards_dealt=26,
+                )
+
+            trump_suit = self._resolve_trump_from_kitty(kitty_state)
 
             # Add kitty cards to dealer's hand
-            new_hands = self._add_kitty_to_dealer_hand(state)
+            new_hands = self._add_kitty_to_dealer_hand(kitty_state)
 
-            new_state = state.copy(
+            new_state = kitty_state.copy(
                 phase=GamePhase.KITTY,
-                current_player=state.dealer_id,
+                current_player=kitty_state.dealer_id,
                 hands=new_hands,
                 trump_suit=trump_suit,
                 passed_players=new_passed,
+                kitty=(),  # Clear kitty (cards already in dealer's hand)
                 legal_actions=(),  # Will be set below
             )
             # Now get legal actions with updated hand
