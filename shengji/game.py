@@ -6,7 +6,7 @@ from .card import Card, Deck, count_identical_cards, get_identical_cards
 from .level import LEVEL_SEQ, step_level
 from .state import GameState
 from .types import GamePhase, Suit, Rank, Action, ActionType, TrickCombination, TrumpBid
-from .trump import is_level_card, is_trump, compare_cards, winning_card
+from .trump import is_level_card, is_trump, compare_cards, winning_card, trump_rank, non_trump_rank
 from .rules import CardCombination, get_card_combinations, can_follow_suit, can_trump, get_legal_plays_when_following, get_legal_trump_bids
 from .scoring import compute_farmer_score, compute_level_changes, count_red_fives, apply_level_changes
 
@@ -340,7 +340,10 @@ class Game:
             # Now get legal actions with updated hand
             new_state = new_state.copy(legal_actions=self._get_legal_actions_kitty(new_state))
         else:
-            # Continue bidding - move to next player
+            # Continue bidding - move to next player, skipping those who have passed
+            while next_player in state.passed_players and len(state.passed_players) < 6:
+                next_player = (next_player + 1) % 6
+
             new_state = state.copy(
                 current_player=next_player,
                 current_trump_bid=bid,
@@ -375,8 +378,10 @@ class Game:
             new_state = new_state.copy(legal_actions=self._get_legal_actions_kitty(new_state))
             return new_state
 
-        # Move to next player
+        # Move to next player, skipping those who have already passed
         next_player = (state.current_player + 1) % 6
+        while next_player in new_passed and len(new_passed) < 6:
+            next_player = (next_player + 1) % 6
 
         new_state = state.copy(
             current_player=next_player,
@@ -470,6 +475,16 @@ class Game:
 
     def _handle_play_cards(self, state: GameState, action: Action) -> GameState:
         """Handle play cards action during trick playing."""
+        # Remove played cards from player's hand
+        player_id = state.current_player
+        player_hand = list(state.hands[player_id])
+        for card in action.cards:
+            if card in player_hand:
+                player_hand.remove(card)
+
+        new_hands = list(state.hands)
+        new_hands[player_id] = tuple(player_hand)
+
         # Record play in current trick
         trick_play = (state.current_player, action.cards)
         current_trick = state.current_trick + (trick_play,)
@@ -488,10 +503,10 @@ class Game:
             tricks_won = state.tricks_won + ((winner_id, trick_cards),)
 
             # Determine next player (winner leads)
-            next_player = current_trick[winner][0]
+            next_player = current_trick[winner_idx][0]
 
             # Check if all cards played (26 tricks max)
-            cards_remaining = sum(len(h) for h in state.hands)
+            cards_remaining = sum(len(h) for h in new_hands)
             if cards_remaining <= 0:
                 # Game complete - add buried cards to last trick winner
                 final_tricks_won = tricks_won
@@ -503,6 +518,7 @@ class Game:
 
                 # Calculate final state before SCORING
                 state_before_scoring = state.copy(
+                    hands=tuple(new_hands),
                     tricks_won=final_tricks_won,
                     helper_players=new_helpers,
                 )
@@ -521,11 +537,12 @@ class Game:
             else:
                 # Continue to next trick
                 new_state = state.copy(
+                    hands=tuple(new_hands),
                     current_player=next_player,
                     current_trick=(),
                     tricks_won=tricks_won,
                     helper_players=new_helpers,
-                    legal_actions=self._get_legal_actions_trick_playing(state.copy(current_player=next_player)),
+                    legal_actions=self._get_legal_actions_trick_playing(state.copy(hands=tuple(new_hands), current_player=next_player)),
                 )
                 return new_state
 
@@ -533,10 +550,11 @@ class Game:
             # Continue trick with next player
             next_player = (state.current_player + 1) % 6
             new_state = state.copy(
+                hands=tuple(new_hands),
                 current_player=next_player,
                 current_trick=current_trick,
                 helper_players=new_helpers,
-                legal_actions=self._get_legal_actions_trick_playing(state.copy(current_player=next_player, current_trick=current_trick)),
+                legal_actions=self._get_legal_actions_trick_playing(state.copy(hands=tuple(new_hands), current_player=next_player, current_trick=current_trick)),
             )
             return new_state
 

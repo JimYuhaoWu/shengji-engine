@@ -107,9 +107,9 @@ DEALING → TRUMP_DECLARATION → KITTY → CALL_HELPER → TRICK_PLAYING → SC
 ```
 
 - **DEALING**: distribute 26 cards to each player, 6 cards to kitty (dealt one card at a time)
-- **TRUMP_DECLARATION**: players bid by showing level cards; auction-style (higher bids only in different suits); highest declaration wins
+- **TRUMP_DECLARATION**: overlaps with DEALING; players bid with level cards (higher count or level beats previous); ends when all pass or 10-second grace period expires after dealing ends
 - **KITTY**: dealer sees kitty, swaps up to 6 cards, buries remainder (底牌); scores in kitty count toward last trick winner (2x multiplier based on winning combo card count)
-- **CALL_HELPER**: dealer names a card; whoever holds it becomes a helper (may be hidden)
+- **CALL_HELPER**: dealer calls a non-trump card; first two players to play it become helpers (or one player if they play 2+ copies first)
 - **TRICK_PLAYING**: variable tricks of 6 cards each (max 26 if all singles, fewer with combos); scores tracked per-player until all helpers revealed
 - **SCORING**: compute farmer side score, apply level changes, determine next dealer
 
@@ -197,6 +197,57 @@ Priority order:
        - Only compare highest PAIR: 5♥ > Large Joker
        - Second pair and whether it's part of a tractor doesn't matter
    - **Invalid trump** (not exact match): treated as lower play, cannot win
+
+## Trump Declaration (implement in trump.py)
+
+**Overlapping with Dealing:**
+- Trump declaration starts as soon as the first card is dealt
+- Players can bid at any time during both dealing and the grace period
+
+**Valid Bids:**
+Bids involve only level cards (ranks: 2, 4, 6, 7, 8, 9, 10, J, Q, K, A).
+- A bid consists of: count + level (e.g., "1×7", "2×7", "3×7")
+- A valid bid must beat the previous highest bid by:
+  - **Higher count of the same level**, OR
+  - **Any count of a higher level**
+- **Suit doesn't matter for bid validity** — a bid of 2×7s can mix suits (e.g., 7♥ + 7♦)
+
+Examples (in order of strength):
+1. 1×7 (one seven, any suit)
+2. 2×7 (two sevens, any suits including mixed)
+3. 3×7 (three sevens, any suits including mixed) ← locks level 7 as trump
+4. 1×J (one jack, any suit)
+5. 2×J (two jacks, any suits)
+6. 3×J (three jacks, any suits) ← locks level J as trump
+
+**Grace Period:**
+- After dealing completes (26 cards to each player + 6 to kitty)
+- Players may pass explicitly to accelerate the grace period
+- If not all players pass, the phase auto-ends when 10 seconds expire
+
+**Trump Determination:**
+- If bids exist: Highest bidder's level determines trump suit (they choose the suit)
+- If no bids: Randomly draw a card from the kitty
+  - If Joker: discard and redraw
+  - Non-Joker card's suit becomes trump
+
+## Call Helper (implement in state.py)
+
+**When:** After TRUMP_DECLARATION and KITTY phases, before TRICK_PLAYING
+
+**Dealer's Call:**
+- Dealer calls a non-trump card (any card that is not a trump card based on the declared trump suit and level)
+- Since three decks exist, there are exactly three identical copies of the called card
+
+**Helper Determination (during TRICK_PLAYING):**
+1. The first player to play the called card becomes helper #1
+2. The second player to play the called card becomes helper #2
+3. **Special rule:** If a player plays 2+ copies of the called card (as a pair or part of a larger combination) BEFORE any other player has played the called card, that player becomes the ONLY helper (no second helper)
+4. **Edge case:** If all three copies are buried in the kitty (dealer swapped them out), there are no helpers for that round
+
+**Helper Reveal:**
+- Helpers do not reveal themselves until they play the called card
+- Before then, they appear to be farmers to other players
 
 ## Trump Ordering (implement in trump.py)
 

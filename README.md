@@ -44,11 +44,25 @@ A Python library implementing the complete game logic for 拖拉机 as played by
 - All players start at R1:2
 - Level movement is bidirectional — basement rounds are fully traversable
 
+### Trump Declaration Phase
+- **Timing**: Overlaps with dealing; starts after first card is dealt
+- **Valid bids**: Count + level (e.g., 1×7♥, 2×7s, 3×Ks)
+- **Bid hierarchy**: 1×Level < 2×Level < 3×Level < 1×HigherLevel, etc.
+- **Grace period**: 10 seconds after dealing ends; players can pass to end early
+- **Result**: Highest bidder determines trump suit
+
 ### Trump System
-- **Trump suit** is declared via auction-style bidding with level cards (higher bids only in different suits)
+- **Trump suit** is the suit called by the highest bidder
 - **Trump cards** (highest to lowest): 5♥ > 5♦ > Large Joker > Small Joker > Captain (3 of trump color) > Lieutenant (3 of other color) > Trump Level Card > Non-Trump Level Cards > A > K > Q > J > T > 9 > 8 > 7 > 6 > 4 > 2
 - **Non-trump suit cards** rank: A > K > Q > J > T > 9 > 8 > 7 > 6 > 5 > 4 > 3 > 2
 - **Special rule:** Pairs and tractors can form from trump hierarchy levels (e.g., 7♥+7♥+7♦+7♦ form a tractor; 7♥+7♥+3♦+3♦ form a tractor)
+
+### Call Helper Phase
+- **Dealer calls** a non-trump card (3 identical copies exist)
+- **Helper #1**: First player to play the called card
+- **Helper #2**: Second player to play the called card
+- **Solo helper exception**: If a player plays 2+ copies of the called card (pair or larger combo) BEFORE anyone else plays it, that player becomes the only helper
+- **No helpers**: If all three called cards are buried in the kitty
 
 ### Card Combinations
 - **Single**: any one card
