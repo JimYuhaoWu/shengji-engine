@@ -199,7 +199,7 @@ def test_farmer_score_calculation():
     Verify that:
     - Score is sum of 5s (5pts), 10s (10pts), and Kings (10pts)
     - Only farmer-side captured cards count
-    - Total maximum score is 320
+    - Total maximum score is 300 (3 decks × 100 points per deck)
     """
     game = Game()
     state = game.reset(dealer_id=0)
@@ -215,9 +215,9 @@ def test_farmer_score_calculation():
     if state.phase == GamePhase.SCORING:
         farmer_score = game._calculate_farmer_score(state)
 
-        # Score should be between 0 and 320
-        if 0 <= farmer_score <= 320:
-            print(f"[PASS] Farmer score - Valid score of {farmer_score} (0-320)")
+        # Score should be between 0 and 300 (3 decks × 100 points)
+        if 0 <= farmer_score <= 300:
+            print(f"[PASS] Farmer score - Valid score of {farmer_score} (0-300)")
             return True
         else:
             print(f"[FAIL] Farmer score - Invalid score of {farmer_score}")

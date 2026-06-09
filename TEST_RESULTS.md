@@ -52,7 +52,7 @@ The complete Sheng Ji game engine implementation has been tested and validated. 
 [PASS] Helper calling non-trump only - All callable cards verified non-trump
 [PASS] Highest led suit wins - Trick playing phase reachable
 [PASS] Card removal from hand - Cards properly removed during play
-[PASS] Farmer score calculation - Valid scores (0-320 range)
+[PASS] Farmer score calculation - Valid scores (0-300 range)
 [PASS] Next dealer determination - Threshold at farmer_score >= 120
 [PASS] Complete game flow - First game completes, next_game() works
 ```
@@ -94,7 +94,7 @@ The complete Sheng Ji game engine implementation has been tested and validated. 
   - 5 = 5 points
   - 10 = 10 points
   - K = 10 points
-- Maximum score: 320 points
+- Maximum score: 300 points (3 decks × 100 points per deck)
 - Buried cards awarded to last trick winner
 
 ### 6. Next Dealer Determination ✓
