@@ -34,9 +34,10 @@ class GameState:
     # Buried cards (during and after KITTY phase)
     buried_cards: Tuple[Card, ...] = ()  # 6 cards buried by dealer, revealed at end
 
-    # Helper card
-    helper_card: Optional[Card] = None
-    revealed_helpers: Tuple[int, ...] = ()  # player ids who revealed themselves
+    # Helper card (identified by rank and suit only, ignoring deck_id)
+    called_rank: Optional[str] = None  # Rank of called card (e.g., "5", "K")
+    called_suit: Optional[Suit] = None  # Suit of called card
+    helper_players: Tuple[int, ...] = ()  # player ids who are helpers (0, 1, or 2)
 
     # Trick tracking
     current_trick: Tuple[Tuple[int, Tuple[Card, ...]], ...] = ()  # [(player_id, cards), ...]
@@ -67,8 +68,9 @@ class GameState:
             'passed_players': self.passed_players,
             'trump_bids_history': self.trump_bids_history,
             'buried_cards': self.buried_cards,
-            'helper_card': self.helper_card,
-            'revealed_helpers': self.revealed_helpers,
+            'called_rank': self.called_rank,
+            'called_suit': self.called_suit,
+            'helper_players': self.helper_players,
             'current_trick': self.current_trick,
             'tricks_won': self.tricks_won,
             'player_levels': self.player_levels,

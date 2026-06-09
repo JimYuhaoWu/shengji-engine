@@ -63,8 +63,9 @@ class Game:
             current_trump_bid=None,
             passed_players=(),
             trump_bids_history=(),
-            helper_card=None,
-            revealed_helpers=(),
+            called_rank=None,
+            called_suit=None,
+            helper_players=(),
             current_trick=(),
             tricks_won=(),
             player_levels=player_levels,
@@ -145,18 +146,26 @@ class Game:
         return tuple(actions)
 
     def _get_legal_actions_call_helper(self, state: GameState) -> Tuple[Action, ...]:
-        """Get legal helper card calling actions for dealer."""
-        # Dealer can call any non-trump card from the deck
-        actions: List[Action] = []
+        """Get legal helper card calling actions for dealer.
 
-        # Collect all possible cards (non-trump) that could be called
+        Dealer can call any non-trump card (identified by rank+suit only).
+        """
+        actions: List[Action] = []
+        trump_level = state.trump_level
+
+        # Collect all possible non-trump cards that could be called
         for suit in [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]:
             for rank in Rank:
                 if rank == Rank.LARGE_JOKER or rank == Rank.SMALL_JOKER:
                     continue
+                # Check if this rank+suit combo is non-trump
                 card = Card(suit, rank, 0)
-                if not is_trump(card, state.trump_suit, state.player_levels[state.dealer_id].split(":")[1]):
-                    actions.append(Action(action_type=ActionType.CALL_HELPER, cards=(card,), target_suit=None))
+                if not is_trump(card, state.trump_suit, trump_level):
+                    # Store as action with rank and suit (deck_id doesn't matter for calling)
+                    actions.append(Action(
+                        action_type=ActionType.CALL_HELPER,
+                        cards=(card,)  # Just one card representation (deck_id=0)
+                    ))
 
         return tuple(actions)
 
@@ -342,16 +351,36 @@ class Game:
         return new_state
 
     def _handle_call_helper(self, state: GameState, action: Action) -> GameState:
-        """Handle call helper action."""
-        # Record the called card
-        helper_card = action.cards[0] if action.cards else None
+        """Handle call helper action.
 
-        # Transition to TRICK_PLAYING
+        Dealer selects a non-trump card to call. The first two players to play
+        this card (by rank+suit) become helpers.
+        """
+        # Extract the called card (rank and suit)
+        called_card = action.cards[0] if action.cards else None
+        if not called_card:
+            return state
+
+        called_rank = called_card.rank.value
+        called_suit = called_card.suit
+
+        # Check if called card exists in the game (not all buried/in dealer hand)
+        # Count copies of called card in hands and buried
+        called_count = 0
+        for hand in state.hands:
+            called_count += sum(1 for c in hand if c.rank == called_card.rank and c.suit == called_suit)
+        called_count += sum(1 for c in state.buried_cards if c.rank == called_card.rank and c.suit == called_suit)
+
+        # If all 3 copies are with dealer or buried, there are no helpers
+        # (This is determined after cards are visible, but we can check now)
+
+        # Transition to TRICK_PLAYING with dealer as first player
         new_state = state.copy(
             phase=GamePhase.TRICK_PLAYING,
-            current_player=state.current_player,  # Will be set to lead player in trick playing
-            helper_card=helper_card,
-            legal_actions=self._get_legal_actions_trick_playing(state),
+            current_player=state.dealer_id,  # Dealer leads first trick
+            called_rank=called_rank,
+            called_suit=called_suit,
+            legal_actions=self._get_legal_actions_trick_playing(state.copy(current_player=state.dealer_id)),
         )
         return new_state
 
@@ -360,6 +389,9 @@ class Game:
         # Record play in current trick
         trick_play = (state.current_player, action.cards)
         current_trick = state.current_trick + (trick_play,)
+
+        # Update helpers if called card is played
+        new_helpers = self._update_helpers(state, state.current_player, action.cards)
 
         # If trick is complete (6 cards), determine winner and move to next trick
         if len(current_trick) >= 6:
@@ -391,6 +423,7 @@ class Game:
                 new_state = state.copy(
                     phase=GamePhase.SCORING,
                     tricks_won=final_tricks_won,
+                    helper_players=new_helpers,
                     legal_actions=(),
                 )
                 return new_state
@@ -401,6 +434,7 @@ class Game:
                     current_player=next_player,
                     current_trick=(),
                     tricks_won=tricks_won,
+                    helper_players=new_helpers,
                     legal_actions=self._get_legal_actions_trick_playing(state.copy(current_player=next_player)),
                 )
                 return new_state
@@ -411,6 +445,7 @@ class Game:
             new_state = state.copy(
                 current_player=next_player,
                 current_trick=current_trick,
+                helper_players=new_helpers,
                 legal_actions=self._get_legal_actions_trick_playing(state.copy(current_player=next_player, current_trick=current_trick)),
             )
             return new_state
@@ -437,3 +472,50 @@ class Game:
         scoring_values = {Rank.FIVE: 5, Rank.TEN: 10, Rank.KING: 10}
         base_score = sum(scoring_values.get(card.rank, 0) for card in buried_cards)
         return base_score * multiplier
+
+    def _update_helpers(self, state: GameState, player_id: int, cards_played: Tuple[Card, ...]) -> Tuple[int, ...]:
+        """Update helper list when a player plays cards.
+
+        Returns updated helper_players tuple.
+        Rules:
+        - First player to play called card becomes helper #1
+        - Second player to play called card becomes helper #2
+        - If someone plays 2+ copies before anyone else plays it, they become sole helper
+        """
+        if not state.called_rank or not state.called_suit:
+            return state.helper_players
+
+        # Count how many called cards this player is playing
+        called_card_count = sum(
+            1 for c in cards_played
+            if c.rank.value == state.called_rank and c.suit == state.called_suit
+        )
+
+        if called_card_count == 0:
+            # Not playing called card
+            return state.helper_players
+
+        current_helpers = list(state.helper_players)
+
+        # Check if this is the first called card played
+        if len(current_helpers) == 0:
+            # No helpers yet
+            if called_card_count >= 2:
+                # Playing 2+ copies - become sole helper
+                return (player_id,)
+            else:
+                # Playing 1 copy - become first helper
+                return (player_id,)
+
+        elif len(current_helpers) == 1:
+            # Already have one helper
+            if current_helpers[0] == player_id:
+                # Same player playing again - no change
+                return current_helpers
+            else:
+                # Different player - becomes second helper
+                return (current_helpers[0], player_id)
+
+        else:
+            # Already have 2 helpers, no changes
+            return current_helpers
