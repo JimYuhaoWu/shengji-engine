@@ -83,28 +83,23 @@ class Game:
         return state.copy(legal_actions=legal_actions)
 
     def reset(self, dealer_id: int = 0) -> GameState:
-        """Start a new game.
+        """Start a new game with card-by-card dealing and parallel bidding.
 
         Args:
             dealer_id: which player is the dealer (0-5)
 
         Returns:
-            Initial GameState in DEALING phase
+            Initial GameState in DEALING phase (no cards dealt yet)
         """
-        # Deal cards
-        deck = Deck.standard_decks(3)
-        random.shuffle(deck)
+        # Create full deck
+        full_deck = Deck.standard_decks(3)
+        random.shuffle(full_deck)
 
-        hands: List[List[Card]] = [[] for _ in range(6)]
-        for i, card in enumerate(deck[:156]):  # 6 × 26 = 156 cards
-            hands[i % 6].append(card)
+        # Initialize empty hands for each player
+        hands_tuple = tuple(tuple() for _ in range(6))
 
-        # Remaining 6 cards are kitty
-        kitty = deck[156:162]
-
-        # Convert hands to sorted tuples (for consistency)
-        hands_tuple = tuple(tuple(sorted(hand, key=lambda c: (c.suit.value, c.rank.value))) for hand in hands)
-        kitty_tuple = tuple(kitty)
+        # Keep kitty (last 6 cards) and remaining cards in deck
+        deck_tuple = tuple(full_deck)  # All cards start in deck
 
         # Initialize player levels
         player_levels = tuple(LEVEL_SEQ[10] for _ in range(6))  # All start at R1:2
@@ -113,13 +108,15 @@ class Game:
         level_key = player_levels[0]  # e.g., "R1:2"
         trump_level = level_key.split(":")[1]  # e.g., "2"
 
-        # Create initial state
+        # Create initial state with empty hands and full deck
         state = GameState(
             phase=GamePhase.DEALING,
             current_player=0,  # Player 0 can bid first
             dealer_id=dealer_id,
             hands=hands_tuple,
-            kitty=kitty_tuple,
+            kitty=(),  # Will be set at end of dealing
+            cards_dealt=0,  # No cards dealt yet
+            deck=deck_tuple,  # All 162 cards in deck
             trump_suit=None,
             trump_level=trump_level,
             trump_locked=False,
@@ -136,9 +133,47 @@ class Game:
             legal_actions=(),
         )
 
-        # Generate legal actions for first player
-        legal_actions = self._get_legal_actions(state)
-        return state.copy(legal_actions=legal_actions)
+        # Deal first cards and generate legal actions
+        return self._deal_next_round(state)
+
+    def _deal_next_round(self, state: GameState) -> GameState:
+        """Deal one round of cards (one to each player) in round-robin fashion.
+
+        Returns state after dealing the next round, with legal actions set.
+        """
+        if state.cards_dealt >= 26:
+            # All cards dealt, just generate bidding actions
+            return state.copy(legal_actions=self._get_legal_actions_dealing(state))
+
+        # Deal one card to each player in order
+        new_hands = list(state.hands)
+        remaining_deck = list(state.deck)
+
+        for player_id in range(6):
+            if remaining_deck:
+                card = remaining_deck.pop(0)
+                new_hands[player_id] = new_hands[player_id] + (card,)
+
+        new_cards_dealt = state.cards_dealt + 1
+        new_state = state.copy(
+            hands=tuple(new_hands),
+            deck=tuple(remaining_deck),
+            cards_dealt=new_cards_dealt,
+        )
+
+        # When all 26 cards dealt, set up kitty
+        if new_cards_dealt == 26:
+            # Extract last 6 cards as kitty
+            kitty_cards = remaining_deck[-6:] if len(remaining_deck) >= 6 else tuple()
+            remaining_deck = remaining_deck[:-6] if len(remaining_deck) >= 6 else []
+            new_state = new_state.copy(
+                kitty=kitty_cards,
+                deck=tuple(remaining_deck),
+            )
+
+        # Generate legal actions (bidding only, no more dealing)
+        new_state = new_state.copy(legal_actions=self._get_legal_actions_dealing(new_state))
+        return new_state
 
     def _get_legal_actions(self, state: GameState) -> Tuple[Action, ...]:
         """Get legal actions for current state."""
@@ -288,6 +323,10 @@ class Game:
             new_state = self._handle_call_helper(state, action)
         elif action.action_type == ActionType.PLAY_CARDS:
             new_state = self._handle_play_cards(state, action)
+
+        # After bidding during DEALING phase, deal more cards if available
+        if new_state.phase == GamePhase.DEALING and new_state.cards_dealt < 26:
+            new_state = self._deal_next_round(new_state)
 
         info = {
             "phase": new_state.phase,

@@ -20,6 +20,8 @@ class GameState:
     # Cards
     hands: Tuple[Tuple[Card, ...], ...]  # hands[i] = player i's cards
     kitty: Tuple[Card, ...]  # 6 cards during KITTY phase
+    cards_dealt: int = 0  # Number of cards dealt to each player (0-26)
+    deck: Tuple[Card, ...] = ()  # Remaining cards to deal (initially all 162 cards)
 
     # Trump
     trump_suit: Optional[Suit] = None
@@ -61,6 +63,8 @@ class GameState:
             'dealer_id': self.dealer_id,
             'hands': self.hands,
             'kitty': self.kitty,
+            'cards_dealt': self.cards_dealt,
+            'deck': self.deck,
             'trump_suit': self.trump_suit,
             'trump_level': self.trump_level,
             'trump_locked': self.trump_locked,
