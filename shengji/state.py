@@ -41,7 +41,7 @@ class GameState:
 
     # Trick tracking
     current_trick: Tuple[Tuple[int, Tuple[Card, ...]], ...] = ()  # [(player_id, cards), ...]
-    tricks_won: Tuple[Tuple[Card, ...], ...] = ()  # tricks captured by farmer side
+    tricks_won: Tuple[Tuple[int, Tuple[Card, ...]], ...] = ()  # [(winner_id, cards), ...] all tricks
 
     # Player levels
     player_levels: Tuple[str, ...] = ()  # "R1:2", etc.

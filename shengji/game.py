@@ -396,11 +396,12 @@ class Game:
         # If trick is complete (6 cards), determine winner and move to next trick
         if len(current_trick) >= 6:
             # Determine trick winner
-            winner = self._determine_trick_winner(current_trick, state)
+            winner_idx = self._determine_trick_winner(current_trick, state)
+            winner_id = current_trick[winner_idx][0]
 
-            # Update tricks won with scoring cards
+            # Update tricks won with winner and cards
             trick_cards = tuple(c for _, cards in current_trick for c in cards)
-            tricks_won = state.tricks_won + (trick_cards,)
+            tricks_won = state.tricks_won + ((winner_id, trick_cards),)
 
             # Determine next player (winner leads)
             next_player = current_trick[winner][0]
@@ -408,22 +409,27 @@ class Game:
             # Check if all cards played (26 tricks max)
             cards_remaining = sum(len(h) for h in state.hands)
             if cards_remaining <= 0:
-                # Game complete - apply buried card scoring to last trick winner
-                # Buried cards belong to winner of last trick
-                buried_score = 0
-                if state.buried_cards:
-                    multiplier = self._get_max_card_count_in_combo(trick_cards)
-                    buried_score = self._compute_buried_card_score(state.buried_cards, multiplier)
+                # Game complete - add buried cards to last trick winner
+                final_tricks_won = tricks_won
+                if state.buried_cards and tricks_won:
+                    # Last trick winner also gets the buried cards (with multiplier applied in scoring)
+                    last_winner_id, last_trick_cards = tricks_won[-1]
+                    combined_cards = last_trick_cards + state.buried_cards
+                    final_tricks_won = tricks_won[:-1] + ((last_winner_id, combined_cards),)
 
-                # Add buried cards to tricks won (conceptually they go to last trick winner)
-                # For scoring purposes, we can add them to the last trick
-                final_tricks_won = tricks_won[:-1] + (tricks_won[-1] + state.buried_cards,) if tricks_won else (state.buried_cards,)
-
-                # Transition to SCORING
-                new_state = state.copy(
-                    phase=GamePhase.SCORING,
+                # Calculate final state before SCORING
+                state_before_scoring = state.copy(
                     tricks_won=final_tricks_won,
                     helper_players=new_helpers,
+                )
+
+                # Calculate new levels
+                new_levels = self._apply_level_changes(state_before_scoring)
+
+                # Transition to SCORING
+                new_state = state_before_scoring.copy(
+                    phase=GamePhase.SCORING,
+                    player_levels=new_levels,
                     legal_actions=(),
                 )
                 return new_state
@@ -472,6 +478,95 @@ class Game:
         scoring_values = {Rank.FIVE: 5, Rank.TEN: 10, Rank.KING: 10}
         base_score = sum(scoring_values.get(card.rank, 0) for card in buried_cards)
         return base_score * multiplier
+
+    def _calculate_farmer_score(self, state: GameState) -> int:
+        """Calculate total score for the farmer side.
+
+        Farmers are all players except dealer and helpers.
+        Sum all scoring cards captured by farmer players.
+        """
+        farmer_players = set(range(6)) - {state.dealer_id} - set(state.helper_players)
+
+        total_score = 0
+        scoring_values = {Rank.FIVE: 5, Rank.TEN: 10, Rank.KING: 10}
+
+        for winner_id, cards in state.tricks_won:
+            if winner_id in farmer_players:
+                for card in cards:
+                    total_score += scoring_values.get(card.rank, 0)
+
+        return total_score
+
+    def _get_level_change(self, farmer_score: int) -> int:
+        """Determine level change based on farmer score.
+
+        Returns:
+            Positive for farmer win, negative for dealer win, 0 for no change
+        """
+        if farmer_score == 0:
+            return -3  # Dealer side +3
+        elif farmer_score <= 55:
+            return -2  # Dealer side +2
+        elif farmer_score <= 115:
+            return -1  # Dealer side +1
+        elif farmer_score <= 175:
+            return 0   # Farmer win (neutral, resets)
+        elif farmer_score <= 235:
+            return 1   # Farmer side +1
+        elif farmer_score <= 295:
+            return 2   # Farmer side +2
+        else:
+            return 3   # Farmer side +3
+
+    def _count_red_fives(self, state: GameState) -> Tuple[int, int]:
+        """Count red fives (5♥ and 5♦) captured by farmers.
+
+        Returns:
+            (count_5♥, count_5♦)
+        """
+        farmer_players = set(range(6)) - {state.dealer_id} - set(state.helper_players)
+
+        count_hearts_five = 0
+        count_diamonds_five = 0
+
+        for winner_id, cards in state.tricks_won:
+            if winner_id in farmer_players:
+                for card in cards:
+                    if card.rank == Rank.FIVE:
+                        if card.suit == Suit.HEARTS:
+                            count_hearts_five += 1
+                        elif card.suit == Suit.DIAMONDS:
+                            count_diamonds_five += 1
+
+        return (count_hearts_five, count_diamonds_five)
+
+    def _apply_level_changes(self, state: GameState) -> Tuple[str, ...]:
+        """Calculate new player levels based on scoring.
+
+        Returns:
+            Updated player_levels tuple
+        """
+        farmer_score = self._calculate_farmer_score(state)
+        base_change = self._get_level_change(farmer_score)
+
+        # Apply red five penalties (subtracted from dealer side, which means added to farmer side)
+        hearts_fives, diamonds_fives = self._count_red_fives(state)
+        red_five_penalty = hearts_fives * 2 + diamonds_fives * 1
+        total_change = base_change - red_five_penalty
+
+        # Update all players
+        new_levels = []
+        for player_id in range(6):
+            current_level = state.player_levels[player_id]
+            if player_id == state.dealer_id or player_id in state.helper_players:
+                # Dealer side: opposite of farmer change
+                new_level = step_level(current_level, -total_change)
+            else:
+                # Farmer side
+                new_level = step_level(current_level, total_change)
+            new_levels.append(new_level)
+
+        return tuple(new_levels)
 
     def _update_helpers(self, state: GameState, player_id: int, cards_played: Tuple[Card, ...]) -> Tuple[int, ...]:
         """Update helper list when a player plays cards.
