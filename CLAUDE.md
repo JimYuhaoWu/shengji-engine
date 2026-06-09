@@ -151,11 +151,15 @@ Priority order:
   - You can NEVER trump in this case, therefore can NEVER win the trick
 
 **If you do not have the led suit:**
-- You may **trump** with valid trump cards (must match led combination structure)
+- You may **trump** with trump cards that EXACTLY match the led combination type
 - Or you may **not trump** and play other cards
 - Play cards totaling the trick size
 
-**Trump validity:** Trump cards are valid ONLY when they match the led combination. Invalid trump (not matching combination) is treated as a lower play.
+**Trump exact match rule:** Trump must match led combination EXACTLY:
+- Two non-sequential pairs do NOT match tractor (different structures)
+- Pair + 2 singles matches pair + 2 singles (same structure, different cards)
+- Tractor matches tractor (same type)
+- Limo does NOT match tractor (different types, even with same 6-card count)
 
 **How to match the leader's combination (when you have sufficient led suit cards):**
 1. **If single is led**: play a single
@@ -183,11 +187,16 @@ Priority order:
 1. If no valid trump was played: highest card of led suit wins
 2. If valid trump was played: compare trump plays as follows:
    - **For single trump cards:** highest trump rank wins
-   - **For multi-card trump throws:** only compare the combination with maximum card count
-     - Example: tractor (4 cards) vs. tractor + single (5 cards) → compare 5-card combo
-     - If max card count is tied: prefer combo with trios (limo > tractor if both have 6 cards)
-     - Within same combo type: highest card rank wins
-   - **Invalid trump** (not matching led combination): treated as lower play, cannot win
+   - **For multi-card trump throws:** ONLY the component with maximum card count is compared
+     - Example 1: Pair+2singles thrown. Both players trump with exact match (pair+2singles)
+       - (Pair of Large Joker + Small Joker + Captain) vs (Pair of Small Joker + Large Joker + 5♥)
+       - Only compare the PAIR: Large Joker pair > Small Joker pair
+       - Small Joker, Captain, 5♥ are completely ignored
+     - Example 2: Two pairs thrown. Both trump with exact match (two pairs)
+       - (Pair of 5♥ + Pair of Lieutenant) vs (Pair of Large Joker + Pair of Small Joker)
+       - Only compare highest PAIR: 5♥ > Large Joker
+       - Second pair and whether it's part of a tractor doesn't matter
+   - **Invalid trump** (not exact match): treated as lower play, cannot win
 
 ## Trump Ordering (implement in trump.py)
 

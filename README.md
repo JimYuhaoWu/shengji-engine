@@ -80,15 +80,24 @@ A Python library implementing the complete game logic for 拖拉机 as played by
 - Limo: play a limo, else two trios, else a trio+pair+single, else a tractor+two singles, else two pairs+two singles, else a pair+four singles, else six singles
 
 **If you don't have the led suit:**
-- You may **trump** with cards matching the led combination (valid trump)
+- You may **trump** with cards that EXACTLY match the led combination type
 - Or play any cards without trumping (lower play)
 
-**Trumping validity:** Trump cards are valid ONLY when they match the led combination structure. Example: if tractor is led, trump must also be a tractor (or cards matching tractor structure).
+**Trump exact match rule:** Trump must be EXACTLY the same combination type:
+- ❌ Two non-sequential pairs cannot trump a tractor
+- ❌ Pair+2singles cannot trump two pairs
+- ✅ Tractor can trump tractor
+- ✅ Pair+2singles can trump pair+2singles (different card ranks, same structure)
 
 **Trick winner:** Highest card of led suit wins, UNLESS valid trump was played. When comparing multiple trump plays:
-- Compare ranks among trump cards
-- For multi-card throws, only compare the combination with maximum card count
-- If max card count is tied, prefer the combination with **trios** (e.g., limo beats tractor if both have 6 cards)
+- **For single cards:** highest trump rank wins
+- **For multi-card throws:** ONLY the component with maximum card count is compared
+  - Example: (Pair of Large Joker + Small Joker + Captain) vs (Pair of Small Joker + Large Joker + 5♥) when pair+2singles led
+    - Only compare the PAIRS: Large Joker pair wins
+    - Singles (Small Joker, Captain, 5♥) are completely ignored
+  - Another example: (Pair of 5♥ + Pair of Lieutenant) vs (Pair of Large Joker + Pair of Small Joker) when two pairs led
+    - Only compare highest PAIR: 5♥ > Large Joker
+    - Second pair (and whether it's a tractor) doesn't matter
 
 **Kitty scoring**: Scores in kitty belong to the winner of the last trick, multiplied by 2× the number of cards in the winning combination
 
