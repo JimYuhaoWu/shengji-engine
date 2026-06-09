@@ -31,6 +31,9 @@ class GameState:
     passed_players: Tuple[int, ...] = ()  # Players who have passed
     trump_bids_history: Tuple[TrumpBid, ...] = ()  # All bids made in order
 
+    # Buried cards (during and after KITTY phase)
+    buried_cards: Tuple[Card, ...] = ()  # 6 cards buried by dealer, revealed at end
+
     # Helper card
     helper_card: Optional[Card] = None
     revealed_helpers: Tuple[int, ...] = ()  # player ids who revealed themselves
@@ -63,6 +66,7 @@ class GameState:
             'current_trump_bid': self.current_trump_bid,
             'passed_players': self.passed_players,
             'trump_bids_history': self.trump_bids_history,
+            'buried_cards': self.buried_cards,
             'helper_card': self.helper_card,
             'revealed_helpers': self.revealed_helpers,
             'current_trick': self.current_trick,

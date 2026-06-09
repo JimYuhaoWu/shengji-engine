@@ -127,17 +127,20 @@ class Game:
         return self._get_legal_actions_dealing(state)
 
     def _get_legal_actions_kitty(self, state: GameState) -> Tuple[Action, ...]:
-        """Get legal swap actions for dealer during kitty phase."""
-        # Dealer can swap any cards from hand with kitty
-        # For simplicity, return all possible swaps (this would be huge in practice)
-        # In a real game, would need to limit to reasonable number of combinations
-        player_hand = state.hands[state.dealer_id]
+        """Get legal bury actions for dealer during kitty phase.
 
+        Dealer's hand already includes kitty cards (32 total: 26 original + 6 from kitty).
+        Dealer selects 6 cards to bury, keeps the rest.
+        """
+        from itertools import combinations
+
+        dealer_hand = state.hands[state.dealer_id]
         actions: List[Action] = []
 
-        # Simple version: return all 6 cards as a single action (swap entire hand possible cards)
-        # For now, implement just the "no swap" action to move forward
-        actions.append(Action(action_type=ActionType.TAKE_KITTY, cards=(), target_suit=None))
+        # Generate all possible ways to select 6 cards to bury from 32
+        # Note: This can be large (C(32,6) = 906,192), but it's needed for complete game rules
+        for buried_combo in combinations(dealer_hand, 6):
+            actions.append(Action(action_type=ActionType.TAKE_KITTY, cards=tuple(buried_combo)))
 
         return tuple(actions)
 
@@ -228,15 +231,21 @@ class Game:
 
         if trump_locked:
             # Trump is locked - transition to KITTY phase immediately
+            # First, add kitty cards to dealer's hand
+            new_hands = self._add_kitty_to_dealer_hand(state)
+
             new_state = state.copy(
                 phase=GamePhase.KITTY,
                 current_player=state.dealer_id,
+                hands=new_hands,
                 trump_suit=new_trump_suit,
                 trump_locked=True,
                 current_trump_bid=bid,
                 trump_bids_history=new_bid_history,
-                legal_actions=self._get_legal_actions_kitty(state),
+                legal_actions=(),  # Will be set below
             )
+            # Now get legal actions with updated hand
+            new_state = new_state.copy(legal_actions=self._get_legal_actions_kitty(new_state))
         else:
             # Continue bidding - move to next player
             new_state = state.copy(
@@ -258,13 +267,19 @@ class Game:
             # All passed - use fallback rule: random card from kitty
             trump_suit = self._resolve_trump_from_kitty(state)
 
+            # Add kitty cards to dealer's hand
+            new_hands = self._add_kitty_to_dealer_hand(state)
+
             new_state = state.copy(
                 phase=GamePhase.KITTY,
                 current_player=state.dealer_id,
+                hands=new_hands,
                 trump_suit=trump_suit,
                 passed_players=new_passed,
-                legal_actions=self._get_legal_actions_kitty(state),
+                legal_actions=(),  # Will be set below
             )
+            # Now get legal actions with updated hand
+            new_state = new_state.copy(legal_actions=self._get_legal_actions_kitty(new_state))
             return new_state
 
         # Move to next player
@@ -287,15 +302,42 @@ class Game:
             # All kitty cards are Jokers (unlikely) - default to hearts
             return Suit.HEARTS
 
+    def _add_kitty_to_dealer_hand(self, state: GameState) -> Tuple[Tuple[Card, ...], ...]:
+        """Add kitty cards to dealer's hand and sort."""
+        new_hands = list(state.hands)
+        dealer_hand = list(new_hands[state.dealer_id])
+        dealer_hand.extend(state.kitty)
+        # Sort for consistency
+        dealer_hand.sort(key=lambda c: (c.suit.value, c.rank.value))
+        new_hands[state.dealer_id] = tuple(dealer_hand)
+        return tuple(new_hands)
+
     def _handle_kitty(self, state: GameState, action: Action) -> GameState:
-        """Handle kitty phase - dealer swaps cards."""
-        # For now, simplified: dealer keeps current hand
-        # In full version, would implement card swapping logic
+        """Handle kitty phase - dealer selects 6 cards to bury.
+
+        The buried cards are hidden until the last trick is won.
+        """
+        # Cards to bury
+        buried = action.cards
+        if len(buried) != 6:
+            # Invalid action - should have 6 cards
+            return state
+
+        # Remove buried cards from dealer's hand
+        dealer_hand = list(state.hands[state.dealer_id])
+        for card in buried:
+            dealer_hand.remove(card)
+
+        new_hands = list(state.hands)
+        new_hands[state.dealer_id] = tuple(dealer_hand)
 
         # Transition to CALL_HELPER
         new_state = state.copy(
             phase=GamePhase.CALL_HELPER,
-            legal_actions=self._get_legal_actions_call_helper(state),
+            hands=tuple(new_hands),
+            buried_cards=tuple(buried),
+            current_player=state.dealer_id,
+            legal_actions=self._get_legal_actions_call_helper(state.copy(hands=tuple(new_hands))),
         )
         return new_state
 
@@ -334,10 +376,21 @@ class Game:
             # Check if all cards played (26 tricks max)
             cards_remaining = sum(len(h) for h in state.hands)
             if cards_remaining <= 0:
-                # Game complete - transition to SCORING
+                # Game complete - apply buried card scoring to last trick winner
+                # Buried cards belong to winner of last trick
+                buried_score = 0
+                if state.buried_cards:
+                    multiplier = self._get_max_card_count_in_combo(trick_cards)
+                    buried_score = self._compute_buried_card_score(state.buried_cards, multiplier)
+
+                # Add buried cards to tricks won (conceptually they go to last trick winner)
+                # For scoring purposes, we can add them to the last trick
+                final_tricks_won = tricks_won[:-1] + (tricks_won[-1] + state.buried_cards,) if tricks_won else (state.buried_cards,)
+
+                # Transition to SCORING
                 new_state = state.copy(
                     phase=GamePhase.SCORING,
-                    tricks_won=tricks_won,
+                    tricks_won=final_tricks_won,
                     legal_actions=(),
                 )
                 return new_state
@@ -367,3 +420,20 @@ class Game:
         # Simplified: just return index 0 for now
         # Full implementation would compare cards using trump hierarchy
         return 0
+
+    def _get_max_card_count_in_combo(self, cards: Tuple[Card, ...]) -> int:
+        """Get the maximum card count in a combo (for buried card multiplier)."""
+        # For a simple combo, just return the count
+        # For complex combos (pair+single, tractor, etc.), return the count of largest component
+        # Simplified: just return the total count for now
+        return len(cards)
+
+    def _compute_buried_card_score(self, buried_cards: Tuple[Card, ...], multiplier: int) -> int:
+        """Compute the score value of buried cards with multiplier.
+
+        Scoring cards: 5 (5 pts), 10 (10 pts), K (10 pts)
+        Multiplied by the max card count in the winning combo.
+        """
+        scoring_values = {Rank.FIVE: 5, Rank.TEN: 10, Rank.KING: 10}
+        base_score = sum(scoring_values.get(card.rank, 0) for card in buried_cards)
+        return base_score * multiplier
