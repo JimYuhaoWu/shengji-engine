@@ -45,7 +45,7 @@ class GameState:
     phase: GamePhase
     current_player: int             # 0–5, whose turn it is
     hands: tuple[tuple[Card]]       # hands[i] = player i's hand
-    kitty: tuple[Card]              # 8-card kitty (before dealer takes)
+    kitty: tuple[Card]              # 6-card kitty (底牌, before dealer takes)
     trump_suit: Suit | None
     trump_level: str                # "2","4","6","7","8","9","10","J","Q","K","A"
     dealer_id: int
@@ -78,9 +78,9 @@ Full sequence from lowest to highest:
 DEALING → TRUMP_DECLARATION → KITTY → CALL_HELPER → TRICK_PLAYING → SCORING
 ```
 
-- **DEALING**: distribute cards to players and kitty
-- **TRUMP_DECLARATION**: players may declare trump by showing Jokers or level cards; highest declaration wins
-- **KITTY**: dealer sees kitty, swaps up to 8 cards, buries remainder
+- **DEALING**: distribute 26 cards to each player, 6 cards to kitty (dealt one card at a time)
+- **TRUMP_DECLARATION**: players bid by showing level cards; auction-style (higher bids only in different suits); highest declaration wins
+- **KITTY**: dealer sees kitty, swaps up to 6 cards, buries remainder (底牌)
 - **CALL_HELPER**: dealer names a card; whoever holds it becomes a helper (may be hidden)
 - **TRICK_PLAYING**: 25 tricks of 6 cards each
 - **SCORING**: compute farmer score, apply level changes, determine next dealer
@@ -96,7 +96,7 @@ DEALING → TRUMP_DECLARATION → KITTY → CALL_HELPER → TRICK_PLAYING → SC
   - "Consecutive" means adjacent in the suit's rank ordering (skipping trump level cards)
   - Pairs that span trump/non-trump boundary are NOT tractors
   - Example: if 7 is trump level, ♦6-♦7 is not a tractor (spans boundary)
-- **Limo**: two or more consecutive trios of the same suit
+- **Limo (钢板/豪车)**: two or more consecutive trios of the same suit
   - Same consecutiveness rules as tractors
 - **Multi-card throws**: any combination in one suit when leading (e.g. pair + single, trio + two singles, tractor + single)
 
@@ -149,13 +149,19 @@ If you do not have the led suit:
 
 ## Trump Ordering (implement in trump.py)
 
-Within the trump suit (highest to lowest):
+Trump card ranking (highest to lowest):
 ```
-Large Joker > Small Joker > [trump level card of trump suit] > [trump level card of other suits] > A > K > Q > J > 10 > 9 > 8 > 7 > 6 > 5 > 4 > 3 > 2
+5♥ > 5♦ > Large Joker > Small Joker > Captain > Lieutenant > Trump Level Card > Non-Trump Level Cards > A > K > Q > J > 10 > 9 > 8 > 7 > 6 > 4 > 2
 ```
-(of trump suit, skipping the level card rank which moved to the top)
 
-Level cards of non-trump suits also count as trump but rank below the trump-suit level card.
+Where:
+- **Captain**: 3 of trump suit's color (e.g., 3♥ if hearts are trump)
+- **Lieutenant**: 3 of the other color in same pair (e.g., 3♦ if hearts are trump)
+- **Trump Level Card**: the level being played, in trump suit
+- **Non-Trump Level Cards**: the level being played, in non-trump suits
+- **Rest**: A through 2 (of trump suit), skipping level card rank
+
+Non-trump suits rank: A > K > Q > J > 10 > 9 > 8 > 7 > 6 > 5 > 4 > 3 > 2
 
 ## Scoring (implement in scoring.py)
 
