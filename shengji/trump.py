@@ -215,3 +215,36 @@ def winning_card(cards: list[Card], led_suit: Suit, trump_suit: Suit, trump_leve
         if compare_cards(card, winner, led_suit, trump_suit, trump_level) > 0:
             winner = card
     return winner
+
+
+def trump_hierarchy_level(card: Card, trump_suit: Suit, trump_level: str) -> Optional[int]:
+    """
+    Get the hierarchy level for a card in trump context.
+    Used for detecting consecutive pairs in trump cards.
+
+    Returns a number representing position in trump hierarchy (higher = stronger).
+    Returns None if card is not a trump.
+
+    Hierarchy (from lowest to highest):
+    0. Non-trump level cards (7♦, 7♣, 7♠ when 7 is level, hearts is trump)
+    1. Trump level card (7♥ when 7 is level, hearts is trump)
+    2. Captain (3♥ when hearts is trump)
+    3. Lieutenant (3♦ when hearts is trump)
+    ...higher levels for 5s and Jokers as needed
+    """
+    # Non-trump level cards
+    if is_level_card(card, trump_level) and card.suit != trump_suit:
+        return 0
+
+    # Trump level card
+    if is_level_card(card, trump_level) and card.suit == trump_suit:
+        return 1
+
+    # Captain and Lieutenant (these have fixed hierarchy positions regardless of current level)
+    if is_captain(card, trump_suit):
+        return 3
+    if is_lieutenant(card, trump_suit):
+        return 2
+
+    # Other trump cards don't form special tractors
+    return None

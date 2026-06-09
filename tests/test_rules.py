@@ -5,7 +5,7 @@ from shengji.card import Card
 from shengji.types import Suit, Rank, TrickCombination
 from shengji.rules import (
     CardCombination, get_card_combinations, detect_consecutive_pairs,
-    detect_consecutive_trios, can_follow_suit, can_trump
+    detect_consecutive_trios, detect_trump_hierarchy_tractor, can_follow_suit, can_trump
 )
 
 
@@ -196,6 +196,78 @@ class TestCanFollowSuit:
         ]
         # Led suit is hearts, and 7♥ is trump level, but non-trump hearts can follow
         assert can_follow_suit(hand, Suit.HEARTS, Suit.SPADES, "7")
+
+
+class TestTrumpHierarchyTractor:
+    """Test tractor detection using trump hierarchy levels."""
+
+    def test_trump_level_plus_non_trump_level_tractor(self):
+        """Trump level pair + non-trump level pair form tractor (when 7 is level, hearts is trump)."""
+        # 7♥ + 7♥ + 7♦ + 7♦
+        cards = [
+            Card(Suit.HEARTS, Rank.SEVEN, 0),
+            Card(Suit.HEARTS, Rank.SEVEN, 1),
+            Card(Suit.DIAMONDS, Rank.SEVEN, 0),
+            Card(Suit.DIAMONDS, Rank.SEVEN, 1),
+        ]
+        tractor = detect_trump_hierarchy_tractor(cards, Suit.HEARTS, "7")
+        assert tractor is not None
+        assert len(tractor) == 4
+
+    def test_trump_level_plus_lieutenant_tractor(self):
+        """Trump level pair + lieutenant pair form tractor (when 7 is level, hearts is trump)."""
+        # 7♥ + 7♥ + 3♦ + 3♦
+        cards = [
+            Card(Suit.HEARTS, Rank.SEVEN, 0),
+            Card(Suit.HEARTS, Rank.SEVEN, 1),
+            Card(Suit.DIAMONDS, Rank.THREE, 0),
+            Card(Suit.DIAMONDS, Rank.THREE, 1),
+        ]
+        tractor = detect_trump_hierarchy_tractor(cards, Suit.HEARTS, "7")
+        assert tractor is not None
+        assert len(tractor) == 4
+
+    def test_non_consecutive_hierarchy_levels_not_tractor(self):
+        """Trump level pair + captain pair are not consecutive in hierarchy."""
+        # 7♥ + 7♥ + 3♥ + 3♥ (captain is higher than trump level)
+        cards = [
+            Card(Suit.HEARTS, Rank.SEVEN, 0),
+            Card(Suit.HEARTS, Rank.SEVEN, 1),
+            Card(Suit.HEARTS, Rank.THREE, 0),
+            Card(Suit.HEARTS, Rank.THREE, 1),
+        ]
+        tractor = detect_trump_hierarchy_tractor(cards, Suit.HEARTS, "7")
+        assert tractor is None
+
+    def test_insufficient_pairs_not_tractor(self):
+        """Less than 2 pairs cannot form trump hierarchy tractor."""
+        # 7♥ + 7♥ + 7♦ (only 1 diamond 7)
+        cards = [
+            Card(Suit.HEARTS, Rank.SEVEN, 0),
+            Card(Suit.HEARTS, Rank.SEVEN, 1),
+            Card(Suit.DIAMONDS, Rank.SEVEN, 0),
+        ]
+        tractor = detect_trump_hierarchy_tractor(cards, Suit.HEARTS, "7")
+        assert tractor is None
+
+    def test_trump_level_plus_two_non_trump_levels(self):
+        """Finding tractor with 3 levels: function finds first consecutive pair."""
+        # 7♥ + 7♥ + 7♦ + 7♦ + 7♣ + 7♣
+        # When 7 is level and hearts is trump:
+        # 7♥ (level 1 - trump level), 7♦ (level 0 - non-trump), 7♣ (level 0 - non-trump)
+        # 7♥+7♥ and 7♦+7♦ are consecutive (levels 1 and 0), so function finds them
+        cards = [
+            Card(Suit.HEARTS, Rank.SEVEN, 0),
+            Card(Suit.HEARTS, Rank.SEVEN, 1),
+            Card(Suit.DIAMONDS, Rank.SEVEN, 0),
+            Card(Suit.DIAMONDS, Rank.SEVEN, 1),
+            Card(Suit.CLUBS, Rank.SEVEN, 0),
+            Card(Suit.CLUBS, Rank.SEVEN, 1),
+        ]
+        tractor = detect_trump_hierarchy_tractor(cards, Suit.HEARTS, "7")
+        # Should find 7♥+7♥+7♦+7♦ as consecutive
+        assert tractor is not None
+        assert len(tractor) == 4
 
 
 class TestCanTrump:

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from .card import Card, cards_are_identical, count_identical_cards, get_identical_cards, is_red_suit
 from .types import Suit, Rank, TrickCombination
-from .trump import is_trump, is_level_card, is_captain, is_lieutenant
+from .trump import is_trump, is_level_card, is_captain, is_lieutenant, trump_hierarchy_level
 
 
 # Non-trump suit rank ordering (highest to lowest)
@@ -161,6 +161,57 @@ def detect_consecutive_pairs(
     return result
 
 
+def detect_trump_hierarchy_tractor(
+    cards: List[Card],
+    trump_suit: Suit,
+    trump_level: str
+) -> Optional[List[Card]]:
+    """
+    Detect if trump cards form a tractor based on trump hierarchy levels.
+
+    Example: When 7 is level and hearts is trump:
+    - 7♥ + 7♥ + 7♦ + 7♦ (trump level pair + non-trump level pair)
+    - 7♥ + 7♥ + 3♦ + 3♦ (trump level pair + lieutenant pair)
+    - 3♥ + 3♥ + 3♦ + 3♦ (captain pair + lieutenant pair, only if 3 is not level)
+    """
+    # Filter to only trump cards that have hierarchy levels
+    trump_cards = []
+    for card in cards:
+        if is_trump(card, trump_suit, trump_level):
+            level = trump_hierarchy_level(card, trump_suit, trump_level)
+            if level is not None:
+                trump_cards.append((card, level))
+
+    if len(trump_cards) < 4:  # At least 2 pairs
+        return None
+
+    # Group by hierarchy level and count
+    level_groups = {}
+    for card, level in trump_cards:
+        if level not in level_groups:
+            level_groups[level] = []
+        level_groups[level].append(card)
+
+    # Check that each level has at least 2 cards
+    for level, group in level_groups.items():
+        if len(group) < 2:
+            return None
+
+    # Check consecutiveness of levels
+    levels = sorted(level_groups.keys())
+    for i in range(len(levels) - 1):
+        if levels[i + 1] - levels[i] != 1:
+            return None
+
+    # Return one pair from each level
+    result = []
+    for level in levels:
+        pair_cards = level_groups[level][:2]
+        result.extend(pair_cards)
+
+    return result
+
+
 def detect_consecutive_trios(
     cards: List[Card],
     suit: Suit,
@@ -251,6 +302,11 @@ def get_card_combinations(
         tractor = detect_consecutive_pairs(cards, suit, trump_suit, trump_level)
         if tractor:
             combinations.append(CardCombination(tuple(tractor), TrickCombination.TRACTOR))
+
+    # Trump hierarchy tractors (cards with different ranks but consecutive hierarchy levels)
+    trump_tractor = detect_trump_hierarchy_tractor(cards, trump_suit, trump_level)
+    if trump_tractor:
+        combinations.append(CardCombination(tuple(trump_tractor), TrickCombination.TRACTOR))
 
     # Limos (per suit)
     for suit in [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]:
