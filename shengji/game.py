@@ -19,6 +19,69 @@ class Game:
             raise ValueError("Only 6-player games are supported")
         self.num_players = num_players
 
+    def next_game(self, current_state: GameState) -> GameState:
+        """Start the next game based on the current game's scoring.
+
+        Returns:
+            New GameState for the next game with correct dealer and updated levels
+        """
+        if current_state.phase != GamePhase.SCORING:
+            raise ValueError("Can only start next game from SCORING phase")
+
+        # Determine next dealer
+        next_dealer = self._determine_next_dealer(current_state)
+
+        # Get updated levels from current state
+        new_levels = current_state.player_levels
+
+        # Extract trump level from the level system
+        level_key = new_levels[0]  # All players should have been updated
+        trump_level = level_key.split(":")[1]
+
+        # Deal cards
+        deck = Deck.standard_decks(3)
+        import random
+        random.shuffle(deck)
+
+        hands: List[List[Card]] = [[] for _ in range(6)]
+        for i, card in enumerate(deck[:156]):  # 6 × 26 = 156 cards
+            hands[i % 6].append(card)
+
+        # Remaining 6 cards are kitty
+        kitty = deck[156:162]
+
+        # Convert hands to sorted tuples
+        hands_tuple = tuple(tuple(sorted(hand, key=lambda c: (c.suit.value, c.rank.value))) for hand in hands)
+        kitty_tuple = tuple(kitty)
+
+        # Create initial state for next game
+        state = GameState(
+            phase=GamePhase.DEALING,
+            current_player=0,
+            dealer_id=next_dealer,
+            hands=hands_tuple,
+            kitty=kitty_tuple,
+            trump_suit=None,
+            trump_level=trump_level,
+            trump_locked=False,
+            current_trump_bid=None,
+            passed_players=(),
+            trump_bids_history=(),
+            buried_cards=(),
+            called_rank=None,
+            called_suit=None,
+            helper_players=(),
+            current_trick=(),
+            tricks_won=(),
+            player_levels=new_levels,
+            scores=tuple(0 for _ in range(6)),
+            legal_actions=(),
+        )
+
+        # Generate legal actions for first player
+        legal_actions = self._get_legal_actions(state)
+        return state.copy(legal_actions=legal_actions)
+
     def reset(self, dealer_id: int = 0) -> GameState:
         """Start a new game.
 
@@ -226,7 +289,21 @@ class Game:
         elif action.action_type == ActionType.PLAY_CARDS:
             new_state = self._handle_play_cards(state, action)
 
-        info = {"phase": new_state.phase, "current_player": new_state.current_player}
+        info = {
+            "phase": new_state.phase,
+            "current_player": new_state.current_player,
+        }
+
+        # Add SCORING info if game is over
+        if new_state.phase == GamePhase.SCORING:
+            farmer_score = self._calculate_farmer_score(new_state)
+            next_dealer = self._determine_next_dealer(new_state)
+            info.update({
+                "farmer_score": farmer_score,
+                "next_dealer": next_dealer,
+                "game_over": True,
+            })
+
         return (new_state, info)
 
     def _handle_bid_trump(self, state: GameState, action: Action) -> GameState:
@@ -629,6 +706,22 @@ class Game:
             new_levels.append(new_level)
 
         return tuple(new_levels)
+
+    def _determine_next_dealer(self, state: GameState) -> int:
+        """Determine the dealer for the next game.
+
+        Rules:
+        - If farmer score >= 120: Farmers win, next player in clockwise order becomes dealer
+        - If farmer score < 120: Dealer side wins, current dealer stays as dealer
+        """
+        farmer_score = self._calculate_farmer_score(state)
+
+        if farmer_score >= 120:
+            # Farmers win - next player in clockwise order becomes dealer
+            return (state.dealer_id + 1) % 6
+        else:
+            # Dealer side wins - current dealer stays
+            return state.dealer_id
 
     def _detect_combination_type(self, cards: Tuple[Card, ...], trump_suit: Suit, trump_level: str) -> str:
         """Detect the combination type of cards played.
