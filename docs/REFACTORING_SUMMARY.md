@@ -295,12 +295,11 @@ All 9 edge case tests pass:
 - `shengji/rules.py`
   - Fixed: Rank enum handling for '10' → 'T' conversion in `get_legal_trump_bids()`
 
-### Tests
-- `test_edge_cases.py` - Updated for two-phase bidding system
-- `test_bidding_detailed.py` - New: Detailed bidding flow logging
-- `test_bidding_logs.py` - New: Multi-game bidding statistics
-- `test_parallel_dealing_correct.py` - New: Validates correct phase transitions
-- `test_full_game.py` - Updated: Validates complete game with two-phase bidding
+### Tests & Examples
+- `tests/test_game.py` - Updated reset/dealing tests for parallel dealing
+- `examples/edge_cases.py` - Edge-case scenario walkthrough (two-phase bidding)
+- `examples/bidding_demo.py` - Detailed two-phase bidding flow logging
+- `examples/full_game.py` - Plays a complete game end-to-end
 
 ## Future Optimizations
 

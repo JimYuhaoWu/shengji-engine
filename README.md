@@ -178,24 +178,33 @@ state, reward, done, info = game.step(action)
 
 ```
 shengji-engine/
-├── shengji/
+├── shengji/                # The library
 │   ├── __init__.py
-│   ├── game.py          # Game class — main entry point
-│   ├── state.py         # GameState dataclass
-│   ├── card.py          # Card, Deck, CardCombination
-│   ├── types.py         # Action, GamePhase, Suit, Rank enums
-│   ├── rules.py         # Legal action generator, trick winner determination
-│   ├── scoring.py       # Score calculation, level change computation
-│   ├── trump.py         # Trump ordering, trump declaration logic
-│   └── level.py         # Level system, LEVEL_SEQ, stepLevel
-├── tests/
+│   ├── game.py             # Game class — main entry point
+│   ├── state.py            # GameState dataclass
+│   ├── card.py             # Card, Deck, CardCombination
+│   ├── types.py            # Action, GamePhase, Suit, Rank enums
+│   ├── rules.py            # Legal action generator, trick winner determination
+│   ├── scoring.py          # Score calculation, level change computation
+│   ├── trump.py            # Trump ordering, trump declaration logic
+│   └── level.py            # Level system, LEVEL_SEQ, step_level
+├── tests/                  # pytest suite (unit + integration)
 │   ├── test_card.py
 │   ├── test_rules.py
 │   ├── test_scoring.py
 │   ├── test_trump.py
 │   ├── test_level.py
-│   └── test_game.py     # Full game integration tests
+│   ├── test_state.py
+│   └── test_game.py
+├── examples/               # Runnable demo / integration scripts
+│   ├── full_game.py        # Play a complete game end-to-end
+│   ├── edge_cases.py       # Walk through edge-case scenarios
+│   └── bidding_demo.py     # Show the two-phase bidding flow
+├── docs/                   # Supplementary documentation
+│   ├── REFACTORING_SUMMARY.md
+│   └── TEST_RESULTS.md
 ├── pyproject.toml
+├── .gitignore
 ├── README.md
 └── CLAUDE.md
 ```
@@ -212,6 +221,16 @@ shengji-engine/
 ```bash
 pytest tests/ -v
 pytest tests/ --cov=shengji --cov-report=term-missing
+```
+
+## Examples
+
+Runnable scripts demonstrating the engine (run from the repo root):
+
+```bash
+python examples/full_game.py     # play a complete game end-to-end
+python examples/edge_cases.py    # walk through edge-case scenarios
+python examples/bidding_demo.py  # show the two-phase bidding flow
 ```
 
 ## Dependencies

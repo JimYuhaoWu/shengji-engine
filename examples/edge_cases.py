@@ -1,5 +1,11 @@
 """Comprehensive edge case tests for Sheng Ji game engine."""
 
+import sys
+import pathlib
+
+# Allow running directly (`python examples/edge_cases.py`) without installing.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
 from shengji.game import Game
 from shengji.card import Card, Deck
 from shengji.types import Suit, Rank, GamePhase, ActionType

@@ -1,5 +1,11 @@
 """Test a complete game with detailed progress tracking."""
 
+import sys
+import pathlib
+
+# Allow running directly (`python examples/full_game.py`) without installing.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
 from shengji.game import Game
 from shengji.types import GamePhase
 

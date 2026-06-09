@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shengji-engine"
+version = "0.1.0"
+description = "Pure Python game engine for six-player 拖拉机 (Sheng Ji / Tractor)."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Jim Yuhao Wu" }]
+keywords = ["shengji", "tractor", "card-game", "game-engine"]
+
+# No runtime dependencies — pure standard library.
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "pytest-cov>=4.0"]
+
+[project.urls]
+Homepage = "https://github.com/JimYuhaoWu/shengji-engine"
+Repository = "https://github.com/JimYuhaoWu/shengji-engine"
+
+[tool.setuptools]
+packages = ["shengji"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

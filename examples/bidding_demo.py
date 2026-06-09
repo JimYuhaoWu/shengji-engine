@@ -1,5 +1,11 @@
 """Generate detailed bidding logs showing the exact state transitions."""
 
+import sys
+import pathlib
+
+# Allow running directly (`python examples/bidding_demo.py`) without installing.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
+
 from shengji.game import Game
 from shengji.types import GamePhase, ActionType
 
