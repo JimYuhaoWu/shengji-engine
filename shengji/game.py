@@ -467,10 +467,11 @@ class Game:
         """Determine which player won the trick (index in trick tuple).
 
         Rules:
-        - Compare the card component with maximum card count
+        - Compare the component with maximum card count
         - Trump > non-trump
         - Within trump: higher trump rank wins
         - Within led suit: higher rank wins
+        - Tie: earliest played player wins
         """
         if not trick:
             return 0
@@ -479,45 +480,49 @@ class Game:
         first_player_cards = trick[0][1]
         led_suit = first_player_cards[0].suit
 
-        # For each trick entry, get the comparable cards (max count component)
-        # For simplicity, if all cards are singles, compare the single card
-        # If there are pairs/trios/etc., compare the largest component
-
         trump_suit = state.trump_suit
         trump_level = state.trump_level
 
-        # Collect all cards played and their player indices
-        all_plays = []
+        # For each player in the trick, get their strongest card of led suit (or trump)
+        best_idx = 0
+        best_card = None
+        best_rank = -1
+
         for idx, (player_id, cards) in enumerate(trick):
-            for card in cards:
-                all_plays.append((idx, card))
+            # Find the highest card this player played (led suit first, then trump)
+            player_best_card = None
+            player_best_rank = -1
 
-        # Find the highest card of led suit
-        led_suit_cards = [(idx, card) for idx, card in all_plays if card.suit == led_suit]
+            # Check led suit cards
+            led_suit_cards = [c for c in cards if c.suit == led_suit]
+            if led_suit_cards:
+                for card in led_suit_cards:
+                    if is_trump(card, trump_suit, trump_level):
+                        rank = trump_rank(card, trump_suit, trump_level)
+                    else:
+                        rank = non_trump_rank(card)
+                    if rank > player_best_rank:
+                        player_best_rank = rank
+                        player_best_card = card
+            else:
+                # No led suit cards, check for trump
+                trump_cards = [c for c in cards if is_trump(c, trump_suit, trump_level)]
+                if trump_cards:
+                    for card in trump_cards:
+                        rank = trump_rank(card, trump_suit, trump_level)
+                        if rank > player_best_rank:
+                            player_best_rank = rank
+                            player_best_card = card
 
-        if led_suit_cards:
-            # Find highest card of led suit
-            best_idx, best_card = max(
-                led_suit_cards,
-                key=lambda x: (
-                    is_trump(x[1], trump_suit, trump_level),
-                    trump_rank(x[1], trump_suit, trump_level) if is_trump(x[1], trump_suit, trump_level) else non_trump_rank(x[1])
-                )
-            )
-            return best_idx
+            # Compare with current best
+            if player_best_card is not None:
+                if best_card is None or player_best_rank > best_rank:
+                    best_rank = player_best_rank
+                    best_card = player_best_card
+                    best_idx = idx
+                # If tie, keep the earliest played (earliest idx)
 
-        # No led suit cards played, find highest trump
-        trump_cards = [(idx, card) for idx, card in all_plays if is_trump(card, trump_suit, trump_level)]
-
-        if trump_cards:
-            best_idx, best_card = max(
-                trump_cards,
-                key=lambda x: trump_rank(x[1], trump_suit, trump_level)
-            )
-            return best_idx
-
-        # No trump or led suit - shouldn't happen, return first
-        return 0
+        return best_idx
 
     def _get_max_card_count_in_combo(self, cards: Tuple[Card, ...]) -> int:
         """Get the maximum card count in a combo (for buried card multiplier)."""
@@ -723,97 +728,151 @@ class Game:
 
     def _get_legal_following_plays(self, hand: list, led_suit: Suit, led_combo_type: str, trick_size: int,
                                    trump_suit: Suit, trump_level: str) -> List[Tuple[Card, ...]]:
-        """Generate all legal plays when following a trick."""
-        legal_plays = []
+        """Generate all legal plays when following a trick.
 
-        # Check if player has led suit cards
+        Combination matching rules:
+        - Single: play a single
+        - Pair: play a pair if any, else singles
+        - Trio: play a trio if any, else pair+single, else three singles
+        - Tractor: play a tractor if any, else two pairs, else pair+two singles, else four singles
+        - Limo: play a limo, else two trios, else trio+pair+single, else tractor+two singles,
+                else two pairs+two singles, else pair+four singles, else six singles
+        """
+        from itertools import combinations
+
+        legal_plays = []
         led_suit_cards = [c for c in hand if c.suit == led_suit]
 
         if led_suit_cards:
-            # Must follow suit if possible
-            # Apply combination matching rules
+            # Has led suit cards - must follow suit
             if led_combo_type == "single":
-                # Play a single of led suit
                 for card in led_suit_cards:
                     legal_plays.append((card,))
 
             elif led_combo_type == "pair":
-                # Play a pair of led suit if available, else singles
-                led_suit_pairs = self._find_pairs_in_suit(led_suit_cards)
-                if led_suit_pairs:
-                    for pair in led_suit_pairs:
-                        legal_plays.append(tuple(pair))
+                # Pair → singles
+                pairs = self._find_pairs_in_suit(led_suit_cards)
+                if pairs:
+                    for pair in pairs:
+                        legal_plays.extend([tuple(p) for p in pairs])
+                        break  # Only add each pair type once
                 else:
                     for card in led_suit_cards:
                         legal_plays.append((card,))
 
             elif led_combo_type == "trio":
-                # Play trio, else pair+single, else three singles
-                led_suit_trios = self._find_trios_in_suit(led_suit_cards)
-                if led_suit_trios:
-                    for trio in led_suit_trios:
+                # Trio → pair+single → three singles
+                trios = self._find_trios_in_suit(led_suit_cards)
+                if trios:
+                    for trio in trios:
                         legal_plays.append(tuple(trio))
                 else:
                     # Try pair+single
-                    for pair in self._find_pairs_in_suit(led_suit_cards):
-                        remaining = [c for c in led_suit_cards if c not in pair]
-                        for single in remaining:
-                            legal_plays.append(tuple(pair + [single]))
+                    pairs = self._find_pairs_in_suit(led_suit_cards)
+                    if pairs:
+                        for pair in pairs:
+                            for single in led_suit_cards:
+                                if single not in pair:
+                                    legal_plays.append(tuple(pair + [single]))
                     # Three singles
                     if len(led_suit_cards) >= 3:
-                        from itertools import combinations
                         for combo in combinations(led_suit_cards, 3):
                             legal_plays.append(combo)
 
             elif led_combo_type == "tractor":
-                # Play tractor, else two pairs, else pair+two singles, else four singles
-                # Simplified: just allow any 4 cards of led suit for now
-                if len(led_suit_cards) >= 4:
-                    from itertools import combinations
-                    for combo in combinations(led_suit_cards, 4):
-                        legal_plays.append(combo)
-                elif len(led_suit_cards) >= 2:
-                    from itertools import combinations
-                    for combo in combinations(led_suit_cards, 2):
-                        legal_plays.append(combo)
+                # Tractor → two pairs → pair+two singles → four singles
+                tractors = self._find_tractors_in_suit(led_suit_cards, trump_suit, trump_level)
+                if tractors:
+                    for tractor in tractors:
+                        legal_plays.append(tuple(tractor))
+                else:
+                    # Two pairs
+                    pairs = self._find_pairs_in_suit(led_suit_cards)
+                    if len(pairs) >= 2:
+                        for combo in combinations(pairs, 2):
+                            legal_plays.append(tuple(combo[0] + combo[1]))
+                    # Pair + two singles
+                    if pairs:
+                        for pair in pairs:
+                            remaining = [c for c in led_suit_cards if c not in pair]
+                            if len(remaining) >= 2:
+                                for singles in combinations(remaining, 2):
+                                    legal_plays.append(tuple(pair + list(singles)))
+                    # Four singles
+                    if len(led_suit_cards) >= 4:
+                        for combo in combinations(led_suit_cards, 4):
+                            legal_plays.append(combo)
 
             elif led_combo_type == "limo":
-                # Play limo, else two trios, else trio+pair+single, etc.
-                # Simplified: allow any 6 cards of led suit
-                if len(led_suit_cards) >= 6:
-                    from itertools import combinations
-                    for combo in combinations(led_suit_cards, 6):
-                        legal_plays.append(combo)
-                elif len(led_suit_cards) >= 3:
-                    from itertools import combinations
-                    for combo in combinations(led_suit_cards, 3):
-                        legal_plays.append(combo)
+                # Limo → two trios → trio+pair+single → tractor+two singles →
+                # two pairs+two singles → pair+four singles → six singles
+                limos = self._find_limos_in_suit(led_suit_cards, trump_suit, trump_level)
+                if limos:
+                    for limo in limos:
+                        legal_plays.append(tuple(limo))
+                else:
+                    trios = self._find_trios_in_suit(led_suit_cards)
+                    # Two trios
+                    if len(trios) >= 2:
+                        for combo in combinations(trios, 2):
+                            legal_plays.append(tuple(combo[0] + combo[1]))
+                    # Trio + pair + single
+                    if trios and len(led_suit_cards) >= 6:
+                        pairs = self._find_pairs_in_suit(led_suit_cards)
+                        for trio in trios:
+                            for pair in pairs:
+                                if not any(c in trio for c in pair):
+                                    remaining = [c for c in led_suit_cards if c not in trio and c not in pair]
+                                    if remaining:
+                                        legal_plays.append(tuple(trio + pair + [remaining[0]]))
+                    # Tractor + two singles
+                    tractors = self._find_tractors_in_suit(led_suit_cards, trump_suit, trump_level)
+                    if tractors:
+                        for tractor in tractors:
+                            remaining = [c for c in led_suit_cards if c not in tractor]
+                            if len(remaining) >= 2:
+                                for singles in combinations(remaining, 2):
+                                    legal_plays.append(tuple(tractor + list(singles)))
+                    # Two pairs + two singles
+                    pairs = self._find_pairs_in_suit(led_suit_cards)
+                    if len(pairs) >= 2:
+                        for pair_combo in combinations(pairs, 2):
+                            remaining = [c for c in led_suit_cards if c not in pair_combo[0] and c not in pair_combo[1]]
+                            if len(remaining) >= 2:
+                                for singles in combinations(remaining, 2):
+                                    legal_plays.append(tuple(pair_combo[0] + pair_combo[1] + list(singles)))
+                    # Pair + four singles
+                    for pair in pairs:
+                        remaining = [c for c in led_suit_cards if c not in pair]
+                        if len(remaining) >= 4:
+                            for singles in combinations(remaining, 4):
+                                legal_plays.append(tuple(pair + list(singles)))
+                    # Six singles
+                    if len(led_suit_cards) >= 6:
+                        for combo in combinations(led_suit_cards, 6):
+                            legal_plays.append(combo)
 
             elif led_combo_type == "multi":
-                # Need more info on what multi was led, for now just play matching count
-                # Play any combination of size trick_size
+                # Multi: play matching count
                 if len(led_suit_cards) >= trick_size:
-                    from itertools import combinations
                     for combo in combinations(led_suit_cards, trick_size):
                         legal_plays.append(combo)
-                else:
-                    # Insufficient led suit cards - play all of them + fill with any other cards
-                    other_cards = [c for c in hand if c.suit != led_suit]
-                    needed = trick_size - len(led_suit_cards)
-                    if len(other_cards) >= needed:
-                        from itertools import combinations
-                        for other_combo in combinations(other_cards, needed):
-                            legal_plays.append(tuple(led_suit_cards + list(other_combo)))
+
+            # If insufficient led suit cards - play all + fill with any other cards
+            if not legal_plays and len(led_suit_cards) < trick_size:
+                other_cards = [c for c in hand if c.suit != led_suit]
+                needed = trick_size - len(led_suit_cards)
+                if len(other_cards) >= needed:
+                    for other_combo in combinations(other_cards, needed):
+                        legal_plays.append(tuple(led_suit_cards + list(other_combo)))
 
         else:
-            # No led suit cards - can trump or play any cards
-            # For simplicity, allow any combination of trick_size
-            from itertools import combinations
+            # No led suit cards - can play any combination of trick_size
             if len(hand) >= trick_size:
                 for combo in combinations(hand, trick_size):
                     legal_plays.append(combo)
 
-        return legal_plays
+        return legal_plays if legal_plays else [(hand[0],)] if hand else [()]
 
     def _find_pairs_in_suit(self, cards: list) -> List[List[Card]]:
         """Find all pairs in a list of cards (same rank and suit)."""
@@ -836,6 +895,106 @@ class Game:
                 trio_cards = [c for c in cards if c.rank == rank and c.suit == suit][:3]
                 trios.append(trio_cards)
         return trios
+
+    def _find_tractors_in_suit(self, cards: list, trump_suit: Suit, trump_level: str) -> List[List[Card]]:
+        """Find all consecutive pair groups (tractors) in cards of the same suit."""
+        if len(cards) < 4:
+            return []
+
+        from collections import Counter
+        from .rules import get_rank_order_for_suit
+
+        # Get the suit
+        suit = cards[0].suit
+
+        # Count cards by rank
+        rank_counts = Counter(c.rank for c in cards if c.suit == suit)
+
+        # Get rank order for this suit
+        rank_order = get_rank_order_for_suit(suit, trump_suit, trump_level)
+
+        # Find all pairs
+        pair_ranks = [rank for rank, count in rank_counts.items() if count >= 2]
+        if len(pair_ranks) < 2:
+            return []
+
+        # Sort by rank order
+        pair_ranks.sort(key=lambda r: rank_order.index(r) if r in rank_order else 999)
+
+        # Find consecutive sequences
+        tractors = []
+        i = 0
+        while i < len(pair_ranks):
+            sequence = [pair_ranks[i]]
+            j = i + 1
+            while j < len(pair_ranks):
+                if rank_order.index(pair_ranks[j]) == rank_order.index(pair_ranks[j - 1]) + 1:
+                    sequence.append(pair_ranks[j])
+                    j += 1
+                else:
+                    break
+
+            if len(sequence) >= 2:
+                # Build tractor from this sequence
+                tractor_cards = []
+                for rank in sequence:
+                    rank_cards = [c for c in cards if c.rank == rank and c.suit == suit][:2]
+                    tractor_cards.extend(rank_cards)
+                tractors.append(tractor_cards)
+
+            i = j if j > i + 1 else i + 1
+
+        return tractors
+
+    def _find_limos_in_suit(self, cards: list, trump_suit: Suit, trump_level: str) -> List[List[Card]]:
+        """Find all consecutive trio groups (limos) in cards of the same suit."""
+        if len(cards) < 6:
+            return []
+
+        from collections import Counter
+        from .rules import get_rank_order_for_suit
+
+        # Get the suit
+        suit = cards[0].suit
+
+        # Count cards by rank
+        rank_counts = Counter(c.rank for c in cards if c.suit == suit)
+
+        # Get rank order for this suit
+        rank_order = get_rank_order_for_suit(suit, trump_suit, trump_level)
+
+        # Find all trios
+        trio_ranks = [rank for rank, count in rank_counts.items() if count >= 3]
+        if len(trio_ranks) < 2:
+            return []
+
+        # Sort by rank order
+        trio_ranks.sort(key=lambda r: rank_order.index(r) if r in rank_order else 999)
+
+        # Find consecutive sequences
+        limos = []
+        i = 0
+        while i < len(trio_ranks):
+            sequence = [trio_ranks[i]]
+            j = i + 1
+            while j < len(trio_ranks):
+                if rank_order.index(trio_ranks[j]) == rank_order.index(trio_ranks[j - 1]) + 1:
+                    sequence.append(trio_ranks[j])
+                    j += 1
+                else:
+                    break
+
+            if len(sequence) >= 2:
+                # Build limo from this sequence
+                limo_cards = []
+                for rank in sequence:
+                    rank_cards = [c for c in cards if c.rank == rank and c.suit == suit][:3]
+                    limo_cards.extend(rank_cards)
+                limos.append(limo_cards)
+
+            i = j if j > i + 1 else i + 1
+
+        return limos
 
     def _update_helpers(self, state: GameState, player_id: int, cards_played: Tuple[Card, ...]) -> Tuple[int, ...]:
         """Update helper list when a player plays cards.
