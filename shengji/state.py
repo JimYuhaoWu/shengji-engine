@@ -32,6 +32,7 @@ class GameState:
     current_trump_bid: Optional[TrumpBid] = None  # Highest bid so far
     passed_players: Tuple[int, ...] = ()  # Players who have passed
     trump_bids_history: Tuple[TrumpBid, ...] = ()  # All bids made in order
+    bidding_ended: bool = False  # True when all pass or count==3, but dealing continues to 26
 
     # Buried cards (during and after KITTY phase)
     buried_cards: Tuple[Card, ...] = ()  # 6 cards buried by dealer, revealed at end
@@ -71,6 +72,7 @@ class GameState:
             'current_trump_bid': self.current_trump_bid,
             'passed_players': self.passed_players,
             'trump_bids_history': self.trump_bids_history,
+            'bidding_ended': self.bidding_ended,
             'buried_cards': self.buried_cards,
             'called_rank': self.called_rank,
             'called_suit': self.called_suit,

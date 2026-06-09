@@ -139,11 +139,17 @@ class Game:
     def _deal_next_round(self, state: GameState) -> GameState:
         """Deal one round of cards (one to each player) in round-robin fashion.
 
+        Continues dealing until all 26 cards dealt, regardless of bidding status.
         Returns state after dealing the next round, with legal actions set.
         """
         if state.cards_dealt >= 26:
-            # All cards dealt, just generate bidding actions
-            return state.copy(legal_actions=self._get_legal_actions_dealing(state))
+            # All cards dealt, check if we should transition to KITTY
+            if state.bidding_ended and state.cards_dealt == 26:
+                # Bidding has ended and all cards dealt, go to KITTY
+                return self._transition_to_kitty(state)
+            else:
+                # Still bidding, just generate bidding actions
+                return state.copy(legal_actions=self._get_legal_actions_dealing(state))
 
         # Deal one card to each player in order
         new_hands = list(state.hands)
@@ -161,18 +167,41 @@ class Game:
             cards_dealt=new_cards_dealt,
         )
 
-        # When all 26 cards dealt, set up kitty
+        # When all 26 cards dealt, extract kitty but stay in DEALING if bidding not ended
         if new_cards_dealt == 26:
-            # Extract last 6 cards as kitty
-            kitty_cards = remaining_deck[-6:] if len(remaining_deck) >= 6 else tuple()
+            # Extract last 6 cards as kitty (these are the last 6 cards that would be dealt)
+            kitty_cards = tuple(remaining_deck[-6:]) if len(remaining_deck) >= 6 else tuple()
             remaining_deck = remaining_deck[:-6] if len(remaining_deck) >= 6 else []
             new_state = new_state.copy(
                 kitty=kitty_cards,
                 deck=tuple(remaining_deck),
             )
 
-        # Generate legal actions (bidding only, no more dealing)
-        new_state = new_state.copy(legal_actions=self._get_legal_actions_dealing(new_state))
+        # If bidding has ended, transition to KITTY; otherwise continue with bidding
+        if new_state.bidding_ended and new_cards_dealt == 26:
+            return self._transition_to_kitty(new_state)
+        else:
+            # Continue dealing/bidding
+            new_state = new_state.copy(legal_actions=self._get_legal_actions_dealing(new_state))
+            return new_state
+
+    def _transition_to_kitty(self, state: GameState) -> GameState:
+        """Transition from DEALING to KITTY phase.
+
+        Assumes all 26 cards have been dealt and bidding has ended.
+        """
+        # Add kitty cards to dealer's hand
+        new_hands = self._add_kitty_to_dealer_hand(state)
+
+        new_state = state.copy(
+            phase=GamePhase.KITTY,
+            current_player=state.dealer_id,
+            hands=new_hands,
+            kitty=(),  # Clear kitty field (cards now in dealer's hand)
+            legal_actions=(),  # Will be set below
+        )
+        # Generate legal actions with updated hand
+        new_state = new_state.copy(legal_actions=self._get_legal_actions_kitty(new_state))
         return new_state
 
     def _get_legal_actions(self, state: GameState) -> Tuple[Action, ...]:
@@ -193,7 +222,16 @@ class Game:
             return ()
 
     def _get_legal_actions_dealing(self, state: GameState) -> Tuple[Action, ...]:
-        """Get legal trump bid actions during DEALING and TRUMP_DECLARATION phases."""
+        """Get legal trump bid actions during DEALING and TRUMP_DECLARATION phases.
+
+        If bidding has ended, return empty (just continue dealing, no actions needed).
+        Note: Game automatically deals remaining cards when bidding_ended=True.
+        """
+        if state.bidding_ended:
+            # Bidding has ended, no more actions needed during dealing
+            # Game will automatically transition to KITTY after all cards dealt
+            return tuple()
+
         player_id = state.current_player
         player_hand = state.hands[player_id]
         trump_level = state.trump_level
@@ -301,32 +339,48 @@ class Game:
                 for play in legal_plays
             )
 
-    def step(self, state: GameState, action: Action) -> Tuple[GameState, dict]:
+    def step(self, state: GameState, action: Optional[Action] = None) -> Tuple[GameState, dict]:
         """Execute one action and return new state + info.
 
         Args:
             state: Current game state
-            action: Action to execute
+            action: Action to execute (can be None if auto-dealing)
 
         Returns:
             (new_state, info_dict)
         """
-        new_state = state  # Will be overwritten
+        # Special case: if bidding has ended but action is None, auto-deal
+        if action is None and state.phase == GamePhase.DEALING and state.bidding_ended and state.cards_dealt < 26:
+            new_state = self._deal_next_round(state)
+        elif action is None:
+            new_state = state
+        else:
+            new_state = state  # Will be overwritten
 
-        if action.action_type == ActionType.BID_TRUMP:
-            new_state = self._handle_bid_trump(state, action)
-        elif action.action_type == ActionType.PASS_TRUMP:
-            new_state = self._handle_pass_trump(state, action)
-        elif action.action_type == ActionType.TAKE_KITTY:
-            new_state = self._handle_kitty(state, action)
-        elif action.action_type == ActionType.CALL_HELPER:
-            new_state = self._handle_call_helper(state, action)
-        elif action.action_type == ActionType.PLAY_CARDS:
-            new_state = self._handle_play_cards(state, action)
+            if action.action_type == ActionType.BID_TRUMP:
+                new_state = self._handle_bid_trump(state, action)
+            elif action.action_type == ActionType.PASS_TRUMP:
+                new_state = self._handle_pass_trump(state, action)
+            elif action.action_type == ActionType.TAKE_KITTY:
+                new_state = self._handle_kitty(state, action)
+            elif action.action_type == ActionType.CALL_HELPER:
+                new_state = self._handle_call_helper(state, action)
+            elif action.action_type == ActionType.PLAY_CARDS:
+                new_state = self._handle_play_cards(state, action)
 
-        # After bidding during DEALING phase, deal more cards if available
-        if new_state.phase == GamePhase.DEALING and new_state.cards_dealt < 26:
-            new_state = self._deal_next_round(new_state)
+        # After any action during DEALING phase, deal more cards if available
+        # This includes continuing to deal even after bidding ends (all pass or count==3)
+        if new_state.phase == GamePhase.DEALING:
+            if new_state.cards_dealt < 26:
+                # Always deal more cards when available
+                new_state = self._deal_next_round(new_state)
+            elif new_state.bidding_ended and new_state.cards_dealt == 26:
+                # All cards dealt and bidding ended, transition to KITTY
+                if new_state.trump_suit is None:
+                    # Determine trump from kitty if not already set
+                    trump_suit = self._resolve_trump_from_kitty(new_state)
+                    new_state = new_state.copy(trump_suit=trump_suit)
+                new_state = self._transition_to_kitty(new_state)
 
         info = {
             "phase": new_state.phase,
@@ -362,47 +416,25 @@ class Game:
         next_player = (state.current_player + 1) % 6
 
         if trump_locked:
-            # Trump is locked - transition to KITTY phase immediately
-            # First ensure kitty is set up properly
-            kitty_state = state
-            if not state.kitty:
-                # Need to finish dealing and set up kitty
-                remaining_deck = list(state.deck)
-                # Finish dealing all cards to players
-                new_hands_list = list(state.hands)
-                for _ in range(26 - state.cards_dealt):
-                    for player_id in range(6):
-                        if remaining_deck:
-                            card = remaining_deck.pop(0)
-                            new_hands_list[player_id] = new_hands_list[player_id] + (card,)
+            # Trump is locked - set bidding_ended flag
+            # Cards continue to be dealt until 26 per player
+            next_player = (state.current_player + 1) % 6
 
-                # Extract last 6 cards as kitty
-                kitty_cards = tuple(remaining_deck[-6:]) if len(remaining_deck) >= 6 else tuple()
-                remaining_deck = remaining_deck[:-6] if len(remaining_deck) >= 6 else []
-
-                kitty_state = state.copy(
-                    hands=tuple(new_hands_list),
-                    kitty=kitty_cards,
-                    deck=tuple(remaining_deck),
-                    cards_dealt=26,
-                )
-
-            # Add kitty cards to dealer's hand
-            new_hands = self._add_kitty_to_dealer_hand(kitty_state)
-
-            new_state = kitty_state.copy(
-                phase=GamePhase.KITTY,
-                current_player=kitty_state.dealer_id,
-                hands=new_hands,
-                trump_suit=new_trump_suit,
-                trump_locked=True,
+            new_state = state.copy(
+                current_player=next_player,
                 current_trump_bid=bid,
                 trump_bids_history=new_bid_history,
-                kitty=(),  # Clear kitty (cards already in dealer's hand)
-                legal_actions=(),  # Will be set below
+                trump_suit=new_trump_suit,
+                trump_locked=True,
+                bidding_ended=True,  # No more bidding, but continue dealing
+                legal_actions=(),  # Will be set by _deal_next_round
             )
-            # Now get legal actions with updated hand
-            new_state = new_state.copy(legal_actions=self._get_legal_actions_kitty(new_state))
+            # Continue dealing cards until 26 per player
+            if new_state.cards_dealt < 26:
+                new_state = self._deal_next_round(new_state)
+            else:
+                # All cards already dealt, go straight to KITTY
+                new_state = self._transition_to_kitty(new_state)
         else:
             # Continue bidding - move to next player, skipping those who have passed
             while next_player in state.passed_players and len(state.passed_players) < 6:
@@ -424,47 +456,21 @@ class Game:
 
         # Check if all players have passed
         if len(new_passed) >= 6:
-            # All passed - use fallback rule: random card from kitty
-            # First ensure kitty is set up properly
-            kitty_state = state
-            if not state.kitty:
-                # Need to finish dealing and set up kitty
-                remaining_deck = list(state.deck)
-                # Finish dealing all cards to players
-                new_hands = list(state.hands)
-                for _ in range(26 - state.cards_dealt):
-                    for player_id in range(6):
-                        if remaining_deck:
-                            card = remaining_deck.pop(0)
-                            new_hands[player_id] = new_hands[player_id] + (card,)
-
-                # Extract last 6 cards as kitty
-                kitty_cards = tuple(remaining_deck[-6:]) if len(remaining_deck) >= 6 else tuple()
-                remaining_deck = remaining_deck[:-6] if len(remaining_deck) >= 6 else []
-
-                kitty_state = state.copy(
-                    hands=tuple(new_hands),
-                    kitty=kitty_cards,
-                    deck=tuple(remaining_deck),
-                    cards_dealt=26,
-                )
-
-            trump_suit = self._resolve_trump_from_kitty(kitty_state)
-
-            # Add kitty cards to dealer's hand
-            new_hands = self._add_kitty_to_dealer_hand(kitty_state)
-
-            new_state = kitty_state.copy(
-                phase=GamePhase.KITTY,
-                current_player=kitty_state.dealer_id,
-                hands=new_hands,
-                trump_suit=trump_suit,
+            # All passed - mark bidding as ended, resolve trump from kitty later
+            # Cards continue to be dealt until 26 per player
+            new_state = state.copy(
                 passed_players=new_passed,
-                kitty=(),  # Clear kitty (cards already in dealer's hand)
-                legal_actions=(),  # Will be set below
+                bidding_ended=True,  # No more bidding, but continue dealing
+                legal_actions=(),  # Will be set by _deal_next_round
             )
-            # Now get legal actions with updated hand
-            new_state = new_state.copy(legal_actions=self._get_legal_actions_kitty(new_state))
+            # Continue dealing cards until 26 per player
+            if new_state.cards_dealt < 26:
+                new_state = self._deal_next_round(new_state)
+            else:
+                # All cards already dealt, resolve trump and go to KITTY
+                trump_suit = self._resolve_trump_from_kitty(new_state)
+                new_state = new_state.copy(trump_suit=trump_suit)
+                new_state = self._transition_to_kitty(new_state)
             return new_state
 
         # Move to next player, skipping those who have already passed
