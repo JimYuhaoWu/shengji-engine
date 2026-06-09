@@ -5,9 +5,9 @@ from typing import Dict, List, Optional, Tuple
 from .card import Card, Deck, count_identical_cards, get_identical_cards
 from .level import LEVEL_SEQ, step_level
 from .state import GameState
-from .types import GamePhase, Suit, Rank, Action, ActionType, TrickCombination
+from .types import GamePhase, Suit, Rank, Action, ActionType, TrickCombination, TrumpBid
 from .trump import is_level_card, is_trump, compare_cards, winning_card
-from .rules import CardCombination, get_card_combinations, can_follow_suit, can_trump, get_legal_plays_when_following
+from .rules import CardCombination, get_card_combinations, can_follow_suit, can_trump, get_legal_plays_when_following, get_legal_trump_bids
 from .scoring import compute_farmer_score, compute_level_changes, count_red_fives, apply_level_changes
 
 
@@ -46,17 +46,23 @@ class Game:
         # Initialize player levels
         player_levels = tuple(LEVEL_SEQ[10] for _ in range(6))  # All start at R1:2
 
+        # Extract trump level from the level system (all players should have same level in initial setup)
+        level_key = player_levels[0]  # e.g., "R1:2"
+        trump_level = level_key.split(":")[1]  # e.g., "2"
+
         # Create initial state
         state = GameState(
             phase=GamePhase.DEALING,
-            current_player=0,  # Player 0 starts bidding
+            current_player=0,  # Player 0 can bid first
             dealer_id=dealer_id,
             hands=hands_tuple,
             kitty=kitty_tuple,
             trump_suit=None,
-            trump_level="2",
-            trump_declarations=(),
-            trump_declared_by=None,
+            trump_level=trump_level,
+            trump_locked=False,
+            current_trump_bid=None,
+            passed_players=(),
+            trump_bids_history=(),
             helper_card=None,
             revealed_helpers=(),
             current_trick=(),
@@ -88,35 +94,31 @@ class Game:
             return ()
 
     def _get_legal_actions_dealing(self, state: GameState) -> Tuple[Action, ...]:
-        """Get legal trump declaration actions during DEALING phase."""
-        player_hand = state.hands[state.current_player]
-        level_key = state.player_levels[state.current_player]
-        level_rank = level_key.split(":")[1]
+        """Get legal trump bid actions during DEALING and TRUMP_DECLARATION phases."""
+        player_id = state.current_player
+        player_hand = state.hands[player_id]
+        trump_level = state.trump_level
 
         actions: List[Action] = []
 
-        # Can declare level cards of any suit
-        level_cards = [c for c in player_hand if is_level_card(c, level_rank)]
+        # Get all valid bids for this player
+        valid_bids = get_legal_trump_bids(
+            player_hand,
+            trump_level,
+            state.current_trump_bid,
+            player_id
+        )
 
-        # Group by suit
-        suits_with_level = {}
-        for card in level_cards:
-            if card.suit not in suits_with_level:
-                suits_with_level[card.suit] = []
-            suits_with_level[card.suit].append(card)
+        # Add each valid bid as an action
+        for bid in valid_bids:
+            actions.append(Action(
+                action_type=ActionType.BID_TRUMP,
+                trump_bid=bid,
+            ))
 
-        # For each suit, can bid with 1, 2, or 3 cards
-        for suit, cards in suits_with_level.items():
-            for num_cards in range(1, min(len(cards) + 1, 4)):  # Max 3 cards
-                bid_cards = tuple(cards[:num_cards])
-                actions.append(Action(
-                    action_type=ActionType.DECLARE_TRUMP,
-                    cards=bid_cards,
-                    target_suit=suit,
-                ))
-
-        # Can also pass
-        actions.append(Action(action_type=ActionType.DECLARE_TRUMP, cards=(), target_suit=None))
+        # Can always pass (unless already passed)
+        if player_id not in state.passed_players:
+            actions.append(Action(action_type=ActionType.PASS_TRUMP))
 
         return tuple(actions)
 
@@ -194,8 +196,10 @@ class Game:
         """
         new_state = state  # Will be overwritten
 
-        if action.action_type == ActionType.DECLARE_TRUMP:
-            new_state = self._handle_trump_declaration(state, action)
+        if action.action_type == ActionType.BID_TRUMP:
+            new_state = self._handle_bid_trump(state, action)
+        elif action.action_type == ActionType.PASS_TRUMP:
+            new_state = self._handle_pass_trump(state, action)
         elif action.action_type == ActionType.TAKE_KITTY:
             new_state = self._handle_kitty(state, action)
         elif action.action_type == ActionType.CALL_HELPER:
@@ -206,49 +210,82 @@ class Game:
         info = {"phase": new_state.phase, "current_player": new_state.current_player}
         return (new_state, info)
 
-    def _handle_trump_declaration(self, state: GameState, action: Action) -> GameState:
-        """Handle trump declaration action during DEALING/TRUMP_DECLARATION phases."""
-        # Record this declaration
-        declarations = list(state.trump_declarations)
-        declarations.append(action)
+    def _handle_bid_trump(self, state: GameState, action: Action) -> GameState:
+        """Handle trump bid action during DEALING/TRUMP_DECLARATION phases."""
+        bid = action.trump_bid
+        if bid is None:
+            return state
+
+        # Update current bid and history
+        new_bid_history = state.trump_bids_history + (bid,)
+
+        # Check if trump is locked (bid count == 3)
+        trump_locked = (bid.count == 3)
+        new_trump_suit = bid.suit if trump_locked else None
 
         # Move to next player
         next_player = (state.current_player + 1) % 6
 
-        # Check if all players have declared (including passes)
-        if len(declarations) >= 6:
-            # Trump declaration complete - find highest bid
-            winning_declaration = self._determine_winning_declaration(declarations)
-            trump_suit = winning_declaration.target_suit if winning_declaration else None
-            trump_declared_by = declarations.index(winning_declaration) if winning_declaration else 0
+        if trump_locked:
+            # Trump is locked - transition to KITTY phase immediately
+            new_state = state.copy(
+                phase=GamePhase.KITTY,
+                current_player=state.dealer_id,
+                trump_suit=new_trump_suit,
+                trump_locked=True,
+                current_trump_bid=bid,
+                trump_bids_history=new_bid_history,
+                legal_actions=self._get_legal_actions_kitty(state),
+            )
+        else:
+            # Continue bidding - move to next player
+            new_state = state.copy(
+                current_player=next_player,
+                current_trump_bid=bid,
+                trump_bids_history=new_bid_history,
+                legal_actions=self._get_legal_actions_dealing(state.copy(current_player=next_player)),
+            )
 
-            # Transition to KITTY phase
+        return new_state
+
+    def _handle_pass_trump(self, state: GameState, action: Action) -> GameState:
+        """Handle pass trump action during DEALING/TRUMP_DECLARATION phases."""
+        # Add current player to passed list
+        new_passed = state.passed_players + (state.current_player,)
+
+        # Check if all players have passed
+        if len(new_passed) >= 6:
+            # All passed - use fallback rule: random card from kitty
+            trump_suit = self._resolve_trump_from_kitty(state)
+
             new_state = state.copy(
                 phase=GamePhase.KITTY,
                 current_player=state.dealer_id,
                 trump_suit=trump_suit,
-                trump_declarations=tuple(declarations),
-                trump_declared_by=trump_declared_by,
+                passed_players=new_passed,
                 legal_actions=self._get_legal_actions_kitty(state),
             )
             return new_state
 
-        else:
-            # Continue to next player
-            new_state = state.copy(
-                current_player=next_player,
-                trump_declarations=tuple(declarations),
-                legal_actions=self._get_legal_actions_dealing(state.copy(current_player=next_player)),
-            )
-            return new_state
+        # Move to next player
+        next_player = (state.current_player + 1) % 6
 
-    def _determine_winning_declaration(self, declarations: List[Action]) -> Optional[Action]:
-        """Determine the highest trump declaration."""
-        valid = [d for d in declarations if d.target_suit is not None]
-        if not valid:
-            return None
-        # Simple: highest number of cards, then first declarant
-        return max(valid, key=lambda d: (len(d.cards), -declarations.index(d)))
+        new_state = state.copy(
+            current_player=next_player,
+            passed_players=new_passed,
+            legal_actions=self._get_legal_actions_dealing(state.copy(current_player=next_player)),
+        )
+
+        return new_state
+
+    def _resolve_trump_from_kitty(self, state: GameState) -> Suit:
+        """Fallback: pick a random non-Joker card from kitty to determine trump suit."""
+        non_joker_cards = [c for c in state.kitty if c.suit != Suit.JOKER]
+        if non_joker_cards:
+            return random.choice(non_joker_cards).suit
+        else:
+            # All kitty cards are Jokers (unlikely) - default to hearts
+            return Suit.HEARTS
 
     def _handle_kitty(self, state: GameState, action: Action) -> GameState:
         """Handle kitty phase - dealer swaps cards."""

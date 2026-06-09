@@ -44,17 +44,27 @@ class GamePhase(Enum):
 
 class ActionType(Enum):
     """Types of actions a player can take."""
-    DECLARE_TRUMP = auto()      # Show level card(s) to declare trump
+    BID_TRUMP = auto()           # Bid level cards for trump declaration
+    PASS_TRUMP = auto()          # Pass during trump declaration
     PLAY_CARDS = auto()          # Play cards in trick
     TAKE_KITTY = auto()          # Dealer takes kitty cards
     CALL_HELPER = auto()         # Dealer calls a specific card
 
 
 @dataclass(frozen=True)
+class TrumpBid:
+    """Represents a trump declaration bid."""
+    count: int                    # 1, 2, or 3
+    suit: "Suit"                  # Suit being proposed
+    bidder_id: int                # Player who made the bid
+
+
+@dataclass(frozen=True)
 class Action:
     """Represents a single action."""
     action_type: ActionType
-    cards: tuple = ()             # Cards involved (for PLAY_CARDS, DECLARE_TRUMP)
+    cards: tuple = ()             # Cards involved (for PLAY_CARDS, BID_TRUMP)
+    trump_bid: "TrumpBid | None" = None  # Trump bid (for BID_TRUMP)
     target_suit: "Suit | None" = None  # Target suit (for DECLARE_TRUMP)
     target_card: "Card | None" = None  # Target card (for CALL_HELPER)
 

@@ -11,7 +11,7 @@ Combinations:
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 from .card import Card, cards_are_identical, count_identical_cards, get_identical_cards, is_red_suit
-from .types import Suit, Rank, TrickCombination
+from .types import Suit, Rank, TrickCombination, TrumpBid, ActionType, Action
 from .trump import is_trump, is_level_card, is_captain, is_lieutenant, trump_hierarchy_level
 
 
@@ -617,3 +617,56 @@ def get_legal_plays_when_following(
             legal_plays.append(CardCombination(combo_cards, TrickCombination.SINGLE))
 
     return legal_plays if legal_plays else [CardCombination((hand[0],), TrickCombination.SINGLE)]
+
+
+def get_legal_trump_bids(hand: Tuple[Card, ...],
+                         trump_level: str,
+                         current_bid: Optional[TrumpBid],
+                         bidder_id: int) -> List[TrumpBid]:
+    """
+    Get all valid trump bids a player can make.
+
+    Rules:
+    - Count must be strictly higher than current bid
+    - If bidding in current suit: only previous bidder can continue
+    - If bidding in new suit: changes the current suit (must be higher count)
+    - Three of a level locks the trump
+    """
+    valid_bids = []
+
+    # Get level cards of the trump level from hand
+    level_rank = Rank(trump_level)
+    level_cards = [c for c in hand if c.rank == level_rank]
+
+    # Count identical cards by suit
+    cards_by_suit = {}
+    for card in level_cards:
+        if card.suit == Suit.JOKER:
+            continue
+        if card.suit not in cards_by_suit:
+            cards_by_suit[card.suit] = 0
+        cards_by_suit[card.suit] += 1
+
+    if not current_bid:
+        # First bid: can bid 1, 2, or 3 of any suit that has level cards
+        for suit, count in cards_by_suit.items():
+            for bid_count in range(1, min(count, 3) + 1):
+                valid_bids.append(TrumpBid(count=bid_count, suit=suit, bidder_id=bidder_id))
+    else:
+        current_count = current_bid.count
+        current_suit = current_bid.suit
+
+        # If previous bidder is this player, can continue in same suit with higher count
+        if current_bid.bidder_id == bidder_id:
+            for suit, count in cards_by_suit.items():
+                if suit == current_suit:
+                    for bid_count in range(current_count + 1, min(count, 3) + 1):
+                        valid_bids.append(TrumpBid(count=bid_count, suit=suit, bidder_id=bidder_id))
+
+        # Can propose new suit with strictly higher count (beats and changes trump)
+        for suit, count in cards_by_suit.items():
+            if suit != current_suit:
+                for bid_count in range(current_count + 1, min(count, 3) + 1):
+                    valid_bids.append(TrumpBid(count=bid_count, suit=suit, bidder_id=bidder_id))
+
+    return valid_bids

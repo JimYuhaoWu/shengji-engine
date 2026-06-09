@@ -3,7 +3,7 @@
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional
 from .card import Card
-from .types import Suit, GamePhase, Action
+from .types import Suit, GamePhase, Action, TrumpBid
 
 
 @dataclass(frozen=True)
@@ -24,10 +24,12 @@ class GameState:
     # Trump
     trump_suit: Optional[Suit] = None
     trump_level: str = "2"  # "2", "4", "6", "7", "8", "9", "10", "J", "Q", "K", "A"
+    trump_locked: bool = False  # True when someone bids 3 of a level
 
-    # Trump declaration tracking
-    trump_declarations: Tuple[Tuple[int, str, Suit], ...] = ()  # [(player_id, level, suit), ...]
-    trump_declared_by: Optional[int] = None  # player who declared winning bid
+    # Trump declaration bidding (during TRUMP_DECLARATION phase)
+    current_trump_bid: Optional[TrumpBid] = None  # Highest bid so far
+    passed_players: Tuple[int, ...] = ()  # Players who have passed
+    trump_bids_history: Tuple[TrumpBid, ...] = ()  # All bids made in order
 
     # Helper card
     helper_card: Optional[Card] = None
@@ -57,8 +59,10 @@ class GameState:
             'kitty': self.kitty,
             'trump_suit': self.trump_suit,
             'trump_level': self.trump_level,
-            'trump_declarations': self.trump_declarations,
-            'trump_declared_by': self.trump_declared_by,
+            'trump_locked': self.trump_locked,
+            'current_trump_bid': self.current_trump_bid,
+            'passed_players': self.passed_players,
+            'trump_bids_history': self.trump_bids_history,
             'helper_card': self.helper_card,
             'revealed_helpers': self.revealed_helpers,
             'current_trick': self.current_trick,
