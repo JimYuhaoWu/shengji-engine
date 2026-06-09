@@ -1,0 +1,95 @@
+"""Immutable game state representation."""
+
+from dataclasses import dataclass, field
+from typing import List, Tuple, Optional
+from .card import Card
+from .types import Suit, GamePhase, Action
+
+
+@dataclass(frozen=True)
+class GameState:
+    """Represents the complete immutable game state.
+
+    All public functions return a new GameState; the old one is never modified.
+    """
+    # Phase and players
+    phase: GamePhase
+    current_player: int  # 0-5
+    dealer_id: int
+
+    # Cards
+    hands: Tuple[Tuple[Card, ...], ...]  # hands[i] = player i's cards
+    kitty: Tuple[Card, ...]  # 6 cards during KITTY phase
+
+    # Trump
+    trump_suit: Optional[Suit] = None
+    trump_level: str = "2"  # "2", "4", "6", "7", "8", "9", "10", "J", "Q", "K", "A"
+
+    # Trump declaration tracking
+    trump_declarations: Tuple[Tuple[int, str, Suit], ...] = ()  # [(player_id, level, suit), ...]
+    trump_declared_by: Optional[int] = None  # player who declared winning bid
+
+    # Helper card
+    helper_card: Optional[Card] = None
+    revealed_helpers: Tuple[int, ...] = ()  # player ids who revealed themselves
+
+    # Trick tracking
+    current_trick: Tuple[Tuple[int, Tuple[Card, ...]], ...] = ()  # [(player_id, cards), ...]
+    tricks_won: Tuple[Tuple[Card, ...], ...] = ()  # tricks captured by farmer side
+
+    # Player levels
+    player_levels: Tuple[str, ...] = ()  # "R1:2", etc.
+
+    # Scoring
+    scores: Tuple[int, ...] = ()  # current scoring card total per player?
+
+    # Legal actions (pre-computed)
+    legal_actions: Tuple[Action, ...] = ()
+
+    def copy(self, **kwargs) -> "GameState":
+        """Create a new GameState with updated fields."""
+        # Get current state as dict
+        state_dict = {
+            'phase': self.phase,
+            'current_player': self.current_player,
+            'dealer_id': self.dealer_id,
+            'hands': self.hands,
+            'kitty': self.kitty,
+            'trump_suit': self.trump_suit,
+            'trump_level': self.trump_level,
+            'trump_declarations': self.trump_declarations,
+            'trump_declared_by': self.trump_declared_by,
+            'helper_card': self.helper_card,
+            'revealed_helpers': self.revealed_helpers,
+            'current_trick': self.current_trick,
+            'tricks_won': self.tricks_won,
+            'player_levels': self.player_levels,
+            'scores': self.scores,
+            'legal_actions': self.legal_actions,
+        }
+        # Update with provided kwargs
+        state_dict.update(kwargs)
+        return GameState(**state_dict)
+
+    def is_valid(self) -> bool:
+        """Check basic consistency of game state."""
+        # Must have 6 players
+        if len(self.hands) != 6:
+            return False
+        # Hands must be tuples of cards
+        for hand in self.hands:
+            if not isinstance(hand, tuple):
+                return False
+            for card in hand:
+                if not isinstance(card, Card):
+                    return False
+        # Kitty must be tuple of cards
+        if not isinstance(self.kitty, tuple):
+            return False
+        for card in self.kitty:
+            if not isinstance(card, Card):
+                return False
+        # Player count checks
+        if len(self.player_levels) > 0 and len(self.player_levels) != 6:
+            return False
+        return True
