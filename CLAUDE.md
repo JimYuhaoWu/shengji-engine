@@ -108,10 +108,10 @@ DEALING → TRUMP_DECLARATION → KITTY → CALL_HELPER → TRICK_PLAYING → SC
 
 - **DEALING**: distribute 26 cards to each player, 6 cards to kitty (dealt one card at a time)
 - **TRUMP_DECLARATION**: players bid by showing level cards; auction-style (higher bids only in different suits); highest declaration wins
-- **KITTY**: dealer sees kitty, swaps up to 6 cards, buries remainder (底牌)
+- **KITTY**: dealer sees kitty, swaps up to 6 cards, buries remainder (底牌); scores in kitty count toward last trick winner (2x multiplier based on winning combo card count)
 - **CALL_HELPER**: dealer names a card; whoever holds it becomes a helper (may be hidden)
-- **TRICK_PLAYING**: 25 tricks of 6 cards each
-- **SCORING**: compute farmer score, apply level changes, determine next dealer
+- **TRICK_PLAYING**: variable tricks of 6 cards each (max 26 if all singles, fewer with combos); scores tracked per-player until all helpers revealed
+- **SCORING**: compute farmer side score, apply level changes, determine next dealer
 
 ## Legal Action Rules (implement in rules.py)
 
@@ -140,15 +140,22 @@ DEALING → TRUMP_DECLARATION → KITTY → CALL_HELPER → TRICK_PLAYING → SC
 
 **Following a trick:**
 Priority order:
-1. **Suit is the first priority**: must follow the led suit if you have cards of that suit
+1. **Suit is the first priority**: must follow the led suit if you have ANY cards of that suit
 2. **Combination matching is the second priority**: within the suit, match the combination structure if able
 
-If you do not have the led suit:
+**If you have the led suit (critical rule):**
+- You MUST play cards of the led suit first
+- If you have INSUFFICIENT cards of the led suit to match the combination:
+  - Play ALL cards of the led suit you have
+  - Fill remaining slots with non-trump cards from other suits
+  - You can NEVER trump in this case, therefore can NEVER win the trick
+
+**If you do not have the led suit:**
 - You may choose to **trump**, which is a higher play
 - Or you may choose **not to trump**, which is a lower play
 - Play any cards matching the trick size
 
-**How to match the leader's combination (when you have the led suit):**
+**How to match the leader's combination (when you have sufficient led suit cards):**
 1. **If single is led**: play a single
 2. **If pair is led**: 
    - Play a pair if you have one, else play singles
@@ -243,13 +250,20 @@ def test_legal_actions_never_empty_mid_game():
     # During TRICK_PLAYING, legal_actions must never be empty
 ```
 
-## Common Mistakes to Avoid
+## Important Rules (Not Mistakes, But Easy to Confuse)
 
-- **Joker pairs are tractors** — Large+Small Joker is the highest tractor of length 2
-- **Level cards across suits** — a pair of ♥7 and ♦7 (when 7 is trump level) ARE a pair because both are trump
-- **Kitty scoring** — if dealer side loses, the last trick's scoring cards are multiplied by 2x, and kitty cards count double; implement this carefully
-- **Helper reveal timing** — a player is only a helper once they play the called card; before that, they appear to be a farmer
-- **Three decks** — there are 3 copies of every card; pairs require same rank+suit but can be from different decks; tractors can use cards from different decks
+- **5♥ + 5♦ tractor** — These form the highest tractor of length 2 (not Jokers)
+- **Level cards and pairing** — When 7 is trump level, hearts is trump suit:
+  - ♥7 + ♦7 = NOT a pair (two singles, both non-trump level cards)
+  - ♣7 + ♣7 = a pair (identical rank and suit)
+  - ♥7 + ♥7 + ♣7 + ♣7 = a tractor (two consecutive pairs)
+  - ♥7 + ♥7 + ♣7 + ♣7 + ♦7 + ♦7 = multi-throw (tractor + pair of non-trumps)
+- **Kitty scoring multiplier** — Scores in kitty belong to the winner of the last trick:
+  - Multiplied by 2x the number of cards in the winning combination
+  - For multi-card throws, use the combination with maximum cards (e.g., tractor=4, pair=2, single=1; tractor has 4 so multiply by 8)
+- **Score tracking phases** — Before all helpers reveal, each player tracks their own scores individually. After all roles known, sum up Farmer side scores together.
+- **Helper reveal timing** — A player is only a helper once they play the called card; before that, they are potential Farmers
+- **Three decks** — 3 copies of every card exist; pairs require same rank+suit but can be from different deck_ids; tractors can use cards from different decks
 
 ## Build Order
 
