@@ -332,6 +332,220 @@ def can_trump(hand: List[Card], trump_suit: Suit, trump_level: str) -> bool:
     return any(is_trump(c, trump_suit, trump_level) for c in hand)
 
 
+def _get_plays_for_count(
+    cards: List[Card],
+    count: int,
+    combination_type: TrickCombination
+) -> List[Tuple[Card, ...]]:
+    """Get all possible card combinations of a given count from a hand."""
+    if count == 1:
+        return [(c,) for c in cards]
+    if count == 2:
+        # Pairs or two singles
+        plays = []
+        for i, card1 in enumerate(cards):
+            for card2 in cards[i+1:]:
+                plays.append((card1, card2))
+        return plays
+    if count >= 3:
+        # For 3+ cards, return all combinations
+        from itertools import combinations
+        return [combo for combo in combinations(cards, count)]
+    return []
+
+
+def _match_combination_structure(
+    hand: List[Card],
+    led_suit: Suit,
+    led_type: TrickCombination,
+    led_count: int,
+    trump_suit: Suit,
+    trump_level: str
+) -> List[CardCombination]:
+    """
+    Get legal plays when following led suit with sufficient cards.
+    Matches led combination structure in priority order.
+    """
+    led_suit_cards = [c for c in hand if c.suit == led_suit and not is_trump(c, trump_suit, trump_level)]
+    legal_plays = []
+
+    if led_type == TrickCombination.SINGLE:
+        # Play any single of led suit
+        for card in led_suit_cards:
+            legal_plays.append(CardCombination((card,), TrickCombination.SINGLE))
+
+    elif led_type == TrickCombination.PAIR:
+        # Try to play pair, else two singles
+        pairs_attempted = False
+        for card in led_suit_cards:
+            if count_identical_cards(card, led_suit_cards) >= 2:
+                pair = tuple(get_identical_cards(card, led_suit_cards)[:2])
+                pairs_attempted = True
+                if CardCombination(pair, TrickCombination.PAIR) not in legal_plays:
+                    legal_plays.append(CardCombination(pair, TrickCombination.PAIR))
+
+        if not pairs_attempted:
+            # Play two singles (only if pair not found)
+            from itertools import combinations
+            for combo in combinations(led_suit_cards, 2):
+                legal_plays.append(CardCombination(combo, TrickCombination.SINGLE))
+
+    elif led_type == TrickCombination.TRIO:
+        # Try: trio, else pair+single, else three singles
+        trio_attempted = False
+        for card in led_suit_cards:
+            if count_identical_cards(card, led_suit_cards) >= 3:
+                trio = tuple(get_identical_cards(card, led_suit_cards)[:3])
+                trio_attempted = True
+                if CardCombination(trio, TrickCombination.TRIO) not in legal_plays:
+                    legal_plays.append(CardCombination(trio, TrickCombination.TRIO))
+
+        if not trio_attempted:
+            # Try pair + single
+            pair_attempted = False
+            for card in led_suit_cards:
+                if count_identical_cards(card, led_suit_cards) >= 2:
+                    pair = get_identical_cards(card, led_suit_cards)[:2]
+                    pair_attempted = True
+                    remaining = [c for c in led_suit_cards if c not in pair or led_suit_cards.count(c) > pair.count(c)]
+                    for single in remaining:
+                        if single not in pair:
+                            play = tuple(pair + [single])
+                            if CardCombination(play, TrickCombination.SINGLE) not in legal_plays:
+                                legal_plays.append(CardCombination(play, TrickCombination.SINGLE))
+
+            if not pair_attempted:
+                # Play three singles
+                from itertools import combinations
+                for combo in combinations(led_suit_cards, 3):
+                    legal_plays.append(CardCombination(combo, TrickCombination.SINGLE))
+
+    elif led_type == TrickCombination.TRACTOR:
+        # Try: tractor, else two pairs, else pair+two singles, else four singles
+        tractor = detect_consecutive_pairs(led_suit_cards, led_suit, trump_suit, trump_level)
+        if tractor:
+            legal_plays.append(CardCombination(tuple(tractor), TrickCombination.TRACTOR))
+        else:
+            # Try two pairs
+            pair_count = 0
+            pairs = []
+            for card in led_suit_cards:
+                if count_identical_cards(card, led_suit_cards) >= 2:
+                    pair = tuple(get_identical_cards(card, led_suit_cards)[:2])
+                    if all(p not in pairs for p in pair):  # Avoid duplicate pairs
+                        pairs.append(pair)
+                        pair_count += 1
+
+            if pair_count >= 2:
+                # Found two pairs - add them
+                two_pairs = tuple(pairs[0] + pairs[1])
+                legal_plays.append(CardCombination(two_pairs, TrickCombination.SINGLE))
+            else:
+                # Try pair + two singles
+                pair_attempted = False
+                for card in led_suit_cards:
+                    if count_identical_cards(card, led_suit_cards) >= 2:
+                        pair = get_identical_cards(card, led_suit_cards)[:2]
+                        pair_attempted = True
+                        remaining = [c for c in led_suit_cards if c not in pair]
+                        from itertools import combinations
+                        for singles_combo in combinations(remaining, 2):
+                            play = tuple(pair + list(singles_combo))
+                            if CardCombination(play, TrickCombination.SINGLE) not in legal_plays:
+                                legal_plays.append(CardCombination(play, TrickCombination.SINGLE))
+
+                if not pair_attempted:
+                    # Play four singles
+                    from itertools import combinations
+                    for combo in combinations(led_suit_cards, 4):
+                        legal_plays.append(CardCombination(combo, TrickCombination.SINGLE))
+
+    elif led_type == TrickCombination.LIMO:
+        # Try: limo, else two trios, else trio+pair+single, else tractor+two singles,
+        # else two pairs+two singles, else pair+four singles, else six singles
+        limo = detect_consecutive_trios(led_suit_cards, led_suit, trump_suit, trump_level)
+        if limo:
+            legal_plays.append(CardCombination(tuple(limo), TrickCombination.LIMO))
+        else:
+            # Try two trios
+            trios = []
+            for card in led_suit_cards:
+                if count_identical_cards(card, led_suit_cards) >= 3:
+                    trio = tuple(get_identical_cards(card, led_suit_cards)[:3])
+                    if trio not in trios:
+                        trios.append(trio)
+
+            if len(trios) >= 2:
+                two_trios = tuple(trios[0] + trios[1])
+                legal_plays.append(CardCombination(two_trios, TrickCombination.SINGLE))
+            else:
+                # Try trio + pair + single
+                trio_attempted = False
+                for card in led_suit_cards:
+                    if count_identical_cards(card, led_suit_cards) >= 3:
+                        trio = get_identical_cards(card, led_suit_cards)[:3]
+                        trio_attempted = True
+                        remaining = [c for c in led_suit_cards if c not in trio]
+
+                        for card2 in remaining:
+                            if count_identical_cards(card2, remaining) >= 2:
+                                pair = tuple(get_identical_cards(card2, remaining)[:2])
+                                remaining2 = [c for c in remaining if c not in pair]
+                                for single in remaining2:
+                                    play = tuple(list(trio) + list(pair) + [single])
+                                    if CardCombination(play, TrickCombination.SINGLE) not in legal_plays:
+                                        legal_plays.append(CardCombination(play, TrickCombination.SINGLE))
+
+                if not trio_attempted:
+                    # Try tractor + two singles
+                    tractor = detect_consecutive_pairs(led_suit_cards, led_suit, trump_suit, trump_level)
+                    if tractor:
+                        remaining = [c for c in led_suit_cards if c not in tractor]
+                        from itertools import combinations
+                        for singles_combo in combinations(remaining, 2):
+                            play = tuple(tractor + list(singles_combo))
+                            if CardCombination(play, TrickCombination.SINGLE) not in legal_plays:
+                                legal_plays.append(CardCombination(play, TrickCombination.SINGLE))
+                    else:
+                        # Try two pairs + two singles
+                        pairs = []
+                        for card in led_suit_cards:
+                            if count_identical_cards(card, led_suit_cards) >= 2:
+                                pair = tuple(get_identical_cards(card, led_suit_cards)[:2])
+                                if pair not in pairs:
+                                    pairs.append(pair)
+
+                        if len(pairs) >= 2:
+                            two_pairs = pairs[0] + pairs[1]
+                            remaining = [c for c in led_suit_cards if c not in two_pairs]
+                            from itertools import combinations
+                            for singles_combo in combinations(remaining, 2):
+                                play = tuple(two_pairs + tuple(singles_combo))
+                                if CardCombination(play, TrickCombination.SINGLE) not in legal_plays:
+                                    legal_plays.append(CardCombination(play, TrickCombination.SINGLE))
+                        else:
+                            # Try pair + four singles
+                            pair_attempted = False
+                            for card in led_suit_cards:
+                                if count_identical_cards(card, led_suit_cards) >= 2:
+                                    pair = get_identical_cards(card, led_suit_cards)[:2]
+                                    pair_attempted = True
+                                    remaining = [c for c in led_suit_cards if c not in pair]
+                                    from itertools import combinations
+                                    for singles_combo in combinations(remaining, 4):
+                                        play = tuple(pair + list(singles_combo))
+                                        if CardCombination(play, TrickCombination.SINGLE) not in legal_plays:
+                                            legal_plays.append(CardCombination(play, TrickCombination.SINGLE))
+
+                            if not pair_attempted:
+                                # Play six singles
+                                from itertools import combinations
+                                for combo in combinations(led_suit_cards, 6):
+                                    legal_plays.append(CardCombination(combo, TrickCombination.SINGLE))
+
+    return legal_plays
+
+
 def get_legal_plays_when_following(
     hand: List[Card],
     led_combination: CardCombination,
@@ -340,57 +554,66 @@ def get_legal_plays_when_following(
 ) -> List[CardCombination]:
     """
     Get legal plays when following a trick.
-    Priority 1: Follow the led suit with matching structure.
-    Priority 2: If can't follow, can trump or not trump.
+    Priority 1: Follow the led suit with matching structure (if sufficient cards).
+    Priority 2: If insufficient led suit cards, play all led suit + fill with non-trump.
+    Priority 3: If no led suit, can trump (exact match) or play other cards.
     """
     led_suit = led_combination.suit()
     led_type = led_combination.combination_type
     led_count = led_combination.count()
 
-    # Check if we have the led suit (non-trump)
-    has_led_suit = can_follow_suit(hand, led_suit, trump_suit, trump_level)
-
-    if not has_led_suit:
-        # Can't follow suit: choose to trump or not trump
-        # For now, return all possible plays of the correct count
-        legal_plays = []
-        for card in hand:
-            if not is_trump(card, trump_suit, trump_level):
-                legal_plays.append(CardCombination((card,), TrickCombination.SINGLE))
-        return legal_plays
-
-    # Must follow suit
+    # Get all led suit cards (non-trump)
     led_suit_cards = [c for c in hand if c.suit == led_suit and not is_trump(c, trump_suit, trump_level)]
 
-    # TODO: Implement combination matching for following plays
-    # For now, return basic structure matching
+    # Case 1: Have the led suit
+    if led_suit_cards:
+        # Check if sufficient to match led combination
+        if len(led_suit_cards) >= led_count:
+            # SUFFICIENT: Match the led combination structure
+            return _match_combination_structure(hand, led_suit, led_type, led_count, trump_suit, trump_level)
+        else:
+            # INSUFFICIENT: Must play all led suit cards + fill with non-trump cards
+            # These plays can NEVER WIN (no matched structure)
+            legal_plays = []
+            remaining_slots = led_count - len(led_suit_cards)
+
+            # Get non-trump, non-led-suit cards to fill
+            fill_cards = [c for c in hand if c.suit != led_suit and not is_trump(c, trump_suit, trump_level)]
+
+            if len(fill_cards) >= remaining_slots:
+                from itertools import combinations
+                for fill_combo in combinations(fill_cards, remaining_slots):
+                    play = tuple(led_suit_cards + list(fill_combo))
+                    legal_plays.append(CardCombination(play, TrickCombination.SINGLE))
+            else:
+                # Not enough non-trump cards to fill - can use trump to fill
+                all_other_cards = [c for c in hand if c.suit != led_suit and c not in led_suit_cards]
+                if len(all_other_cards) >= remaining_slots:
+                    from itertools import combinations
+                    for fill_combo in combinations(all_other_cards, remaining_slots):
+                        play = tuple(led_suit_cards + list(fill_combo))
+                        legal_plays.append(CardCombination(play, TrickCombination.SINGLE))
+
+            return legal_plays
+
+    # Case 2: Don't have led suit - can trump (exact match) or play other cards
     legal_plays = []
 
-    if led_type == TrickCombination.SINGLE:
-        # Play any single
-        for card in led_suit_cards:
-            legal_plays.append(CardCombination((card,), TrickCombination.SINGLE))
+    # Try to find trump plays with exact matching combination
+    hand_combos = get_card_combinations(hand, trump_suit, trump_level)
+    for combo in hand_combos:
+        # Check if this combo matches led type exactly
+        if combo.combination_type == led_type and combo.count() == led_count:
+            # Check if all cards are trump
+            if all(is_trump(c, trump_suit, trump_level) for c in combo.cards):
+                legal_plays.append(combo)
 
-    elif led_type == TrickCombination.PAIR:
-        # Play pair if have, else singles
-        pairs_found = False
-        for card in led_suit_cards:
-            if count_identical_cards(card, led_suit_cards) >= 2:
-                identical = get_identical_cards(card, led_suit_cards)[:2]
-                combo = CardCombination(tuple(identical), TrickCombination.PAIR)
-                if combo not in legal_plays:
-                    legal_plays.append(combo)
-                    pairs_found = True
+    # If no trump plays, or can also play non-trump
+    # Add any non-trump plays of the right count
+    non_trump_cards = [c for c in hand if not is_trump(c, trump_suit, trump_level)]
+    if non_trump_cards:
+        from itertools import combinations
+        for combo_cards in combinations(non_trump_cards, led_count):
+            legal_plays.append(CardCombination(combo_cards, TrickCombination.SINGLE))
 
-        if not pairs_found:
-            # Play two singles
-            for i, card1 in enumerate(led_suit_cards):
-                for card2 in led_suit_cards[i+1:]:
-                    legal_plays.append(CardCombination((card1, card2), TrickCombination.SINGLE))
-
-    else:
-        # Simplified: just play any combination of right size
-        for card in led_suit_cards:
-            legal_plays.append(CardCombination((card,), TrickCombination.SINGLE))
-
-    return legal_plays
+    return legal_plays if legal_plays else [CardCombination((hand[0],), TrickCombination.SINGLE)]
