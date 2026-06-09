@@ -137,19 +137,40 @@ class Game:
         return self._deal_next_round(state)
 
     def _deal_next_round(self, state: GameState) -> GameState:
-        """Deal one round of cards (one to each player) in round-robin fashion.
+        """Deal one or more rounds of cards until we can take an action.
 
-        Continues dealing until all 26 cards dealt, regardless of bidding status.
-        Returns state after dealing the next round, with legal actions set.
+        If bidding_ended=True, keeps dealing until all 26 cards dealt.
+        Otherwise deals one round and returns with legal bidding actions.
+        """
+        current_state = state
+
+        # Keep dealing if bidding has ended
+        while current_state.cards_dealt < 26 and current_state.bidding_ended:
+            current_state = self._deal_one_round(current_state)
+
+        # Deal one more round if bidding not ended
+        if current_state.cards_dealt < 26 and not current_state.bidding_ended:
+            current_state = self._deal_one_round(current_state)
+
+        # Check if all cards dealt
+        if current_state.cards_dealt >= 26:
+            if current_state.bidding_ended:
+                # All dealt and bidding ended, go to KITTY
+                return self._transition_to_kitty(current_state)
+            else:
+                # All dealt but bidding not ended, return for more bidding
+                return current_state.copy(legal_actions=self._get_legal_actions_dealing(current_state))
+        else:
+            # Still dealing, return with legal actions
+            return current_state.copy(legal_actions=self._get_legal_actions_dealing(current_state))
+
+    def _deal_one_round(self, state: GameState) -> GameState:
+        """Deal exactly one round of cards (one to each player).
+
+        Does NOT generate legal actions. Use _deal_next_round for the public API.
         """
         if state.cards_dealt >= 26:
-            # All cards dealt, check if we should transition to KITTY
-            if state.bidding_ended and state.cards_dealt == 26:
-                # Bidding has ended and all cards dealt, go to KITTY
-                return self._transition_to_kitty(state)
-            else:
-                # Still bidding, just generate bidding actions
-                return state.copy(legal_actions=self._get_legal_actions_dealing(state))
+            return state
 
         # Deal one card to each player in order
         new_hands = list(state.hands)
@@ -167,9 +188,9 @@ class Game:
             cards_dealt=new_cards_dealt,
         )
 
-        # When all 26 cards dealt, extract kitty but stay in DEALING if bidding not ended
+        # When all 26 cards dealt, extract kitty
         if new_cards_dealt == 26:
-            # Extract last 6 cards as kitty (these are the last 6 cards that would be dealt)
+            # Extract last 6 cards as kitty
             kitty_cards = tuple(remaining_deck[-6:]) if len(remaining_deck) >= 6 else tuple()
             remaining_deck = remaining_deck[:-6] if len(remaining_deck) >= 6 else []
             new_state = new_state.copy(
@@ -177,13 +198,7 @@ class Game:
                 deck=tuple(remaining_deck),
             )
 
-        # If bidding has ended, transition to KITTY; otherwise continue with bidding
-        if new_state.bidding_ended and new_cards_dealt == 26:
-            return self._transition_to_kitty(new_state)
-        else:
-            # Continue dealing/bidding
-            new_state = new_state.copy(legal_actions=self._get_legal_actions_dealing(new_state))
-            return new_state
+        return new_state
 
     def _transition_to_kitty(self, state: GameState) -> GameState:
         """Transition from DEALING to KITTY phase.
