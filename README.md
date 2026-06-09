@@ -44,12 +44,20 @@ A Python library implementing the complete game logic for 拖拉机 as played by
 - All players start at R1:2
 - Level movement is bidirectional — basement rounds are fully traversable
 
-### Trump Declaration Phase
-- **Timing**: Overlaps with dealing; starts after first card is dealt
+### Trump Declaration Phase (Two-Phase System)
+- **Phase 1 (DEALING & TRUMP_DECLARATION overlapping)**:
+  - Cards dealt progressively (1-26 per player)
+  - Players MAY bid if they have level cards (optional, no pass tracking)
+  - All 26 cards are always dealt, regardless of bidding status
+- **Phase 2 (TRUMP_DECLARATION after all 26 cards dealt)**:
+  - Players MUST formally bid or pass
+  - Formal passes are tracked; bidding continues until count==3 or all pass
 - **Valid bids**: Count + level (e.g., 1×7♥, 2×7s, 3×Ks)
 - **Bid hierarchy**: 1×Level < 2×Level < 3×Level < 1×HigherLevel, etc.
-- **Grace period**: 10 seconds after dealing ends; players can pass to end early
-- **Result**: Highest bidder determines trump suit
+- **Trump Determination**:
+  - If ANY bids made: Highest bidder determines trump suit
+  - If NO bids made: Random kitty card drawn (fallback rule)
+- **Result**: Trump suit established before KITTY phase begins
 
 ### Trump System
 - **Trump suit** is the suit called by the highest bidder

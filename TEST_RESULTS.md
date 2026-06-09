@@ -2,7 +2,7 @@
 
 ## Summary
 
-The complete Sheng Ji game engine implementation has been tested and validated. **All core game mechanics are working correctly** through comprehensive integration and edge case tests.
+The complete Sheng Ji game engine implementation with **two-phase parallel bidding** has been tested and validated. **All core game mechanics are working correctly** through comprehensive integration and edge case tests, with proper phase transitions and authentic game flow.
 
 ## Critical Bugs Fixed
 
@@ -61,6 +61,31 @@ The complete Sheng Ji game engine implementation has been tested and validated. 
 
 - **Game Flow Completion**: Game reaches SCORING phase in ~167 steps
 - **Next Game Continuation**: Can start new game after SCORING with updated levels and correct dealer
+
+## Two-Phase Bidding System ✓
+
+### Phase 1: DEALING & TRUMP_DECLARATION (Overlapping)
+- Cards dealt progressively (1 card per player per round)
+- Players MAY bid if they have level cards (optional)
+- No pass tracking during this phase
+- All 26 cards delivered regardless of bidding
+- **Test**: Cards properly distributed; optional bids recorded; dealing completes
+- **Result**: ✓ PASS
+
+### Phase 2: TRUMP_DECLARATION (After All 26 Cards Dealt)
+- Formal bidding phase begins after `cards_dealt == 26`
+- Players MUST formally bid or pass
+- Formal passes tracked in `passed_players` tuple
+- Bidding continues until count==3 or all 6 players pass
+- **Test**: Phase transition at correct step; passes tracked; bidding rules enforced
+- **Result**: ✓ PASS
+
+### Fallback Rule: Trump from Kitty
+- If NO bids made during either phase
+- All 6 players formally pass → random kitty card drawn
+- Non-Joker card's suit becomes trump
+- **Test**: Game completes when all players pass; trump determined from kitty
+- **Result**: ✓ PASS
 
 ## Game Mechanics Validation
 

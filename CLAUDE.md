@@ -200,9 +200,21 @@ Priority order:
 
 ## Trump Declaration (implement in trump.py)
 
-**Overlapping with Dealing:**
+**Two-Phase System:**
+
+**Phase 1: DEALING & TRUMP_DECLARATION (Overlapping)**
 - Trump declaration starts as soon as the first card is dealt
-- Players can bid at any time during both dealing and the grace period
+- Cards are dealt progressively (1-26 per player, one round at a time)
+- Players MAY bid at any time during dealing if they have level cards (optional)
+- Players do NOT formally pass during this phase — a player who doesn't bid simply means they haven't bid yet
+- All 26 cards are dealt regardless of bidding status
+
+**Phase 2: TRUMP_DECLARATION (After All 26 Cards Dealt)**
+- After all 26 cards distributed to players, formal TRUMP_DECLARATION phase begins
+- NOW players must formally bid or pass
+- Formal passes are tracked; bidding continues until:
+  - Some player bids count==3 (trump locked), OR
+  - All 6 players formally pass (triggers fallback rule)
 
 **Valid Bids:**
 Bids involve only level cards (ranks: 2, 4, 6, 7, 8, 9, 10, J, Q, K, A).
@@ -220,14 +232,9 @@ Examples (in order of strength):
 5. 2×J (two jacks, any suits)
 6. 3×J (three jacks, any suits) ← locks level J as trump
 
-**Grace Period:**
-- After dealing completes (26 cards to each player + 6 to kitty)
-- Players may pass explicitly to accelerate the grace period
-- If not all players pass, the phase auto-ends when 10 seconds expire
-
 **Trump Determination:**
-- If bids exist: Highest bidder's level determines trump suit (they choose the suit)
-- If no bids: Randomly draw a card from the kitty
+- If ANY bids are made (during Phase 1 or Phase 2): Highest bidder's level determines trump suit
+- If NO bids are made at all: Randomly draw a card from the kitty (fallback rule)
   - If Joker: discard and redraw
   - Non-Joker card's suit becomes trump
 
