@@ -12,6 +12,34 @@ A pure Python game engine for six-player 拖拉机 (Sheng Ji). No UI, no network
 4. **Every public function must have a test.** Write tests alongside code, not after.
 5. **Legal action generator is the most critical function.** It must be exhaustive (no legal move missing) and sound (no illegal move included). Test it obsessively.
 
+## Coding Standards
+
+### 1. Simplicity First
+- **Minimum code that solves the problem.** No speculative abstractions or features beyond what's asked.
+- **No error handling for impossible scenarios.** Trust internal code; validate only at system boundaries (user input, external APIs).
+- **Three similar lines = time to extract.** One-off code stays inline.
+- **Ask: "Is this overcomplicated?"** If yes, rewrite it.
+
+### 2. Surgical Changes
+- **Touch only what you must.** Don't improve adjacent code unless requested.
+- **Match existing style.** Even if you'd do it differently.
+- **Remove only YOUR orphans.** If your changes make an import/variable/function unused, delete it. Don't clean up pre-existing dead code.
+- **Every changed line traces to the user's request.** No drive-by refactoring.
+
+### 3. Think Before Coding
+- **State assumptions explicitly.** Uncertain about interpretation? Ask before implementing.
+- **Surface tradeoffs.** Don't pick silently between equally valid approaches.
+- **Don't hide confusion.** If something is unclear, stop and name what's confusing.
+- **Simplify when possible.** If 50 lines can do what 200 does, rewrite it.
+
+### 4. Goal-Driven Execution
+- **Define success criteria first.** Transform tasks into verifiable checks:
+  - "Add validation" → Write tests for invalid inputs, make them pass
+  - "Fix bug X" → Write test reproducing it, make it pass
+  - "Implement phase Y" → Write tests for all legal actions, pass them
+- **State brief plans for multi-step work.** Format: `1. [Step] → verify: [check]`
+- **Loop until verified.** Success = tests pass + behavior matches spec.
+
 ## Architecture
 
 ```
