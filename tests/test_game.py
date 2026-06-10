@@ -125,3 +125,54 @@ class TestGame:
         state = game.reset()
 
         assert state.trump_level == "2"
+
+
+class TestLevelChangeScoring:
+    """The live game loop must apply scoring/red-five penalties correctly.
+
+    Regression guard: red fives captured by farmers penalize the DEALER side
+    (they must not push the dealer up). This previously diverged from the
+    unit-tested scoring.py due to an inverted sign in game.py.
+    """
+
+    def _state_with_trick(self, captured_cards, dealer_id=0, helpers=()):
+        from shengji.card import Card  # noqa: F401
+        game = Game(num_players=6)
+        state = game.reset()
+        return game, state.copy(
+            dealer_id=dealer_id,
+            helper_players=helpers,
+            player_levels=("R1:2",) * 6,
+            tricks_won=((1, tuple(captured_cards)),),  # player 1 (a farmer) won them
+        )
+
+    def test_red_five_penalizes_dealer(self):
+        """Farmer score 200 (+1 farmer) plus one ♥5 (−2 dealer) => dealer −3."""
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+
+        # 19×K (190) + ♥5 (5) + ♣5 (5) = 200 points, one red (heart) five
+        cards = (
+            [Card(Suit.SPADES, Rank.KING, d % 3) for d in range(19)]
+            + [Card(Suit.HEARTS, Rank.FIVE, 0), Card(Suit.CLUBS, Rank.FIVE, 0)]
+        )
+        game, state = self._state_with_trick(cards)
+        new_levels = game._apply_level_changes(state)
+
+        # Dealer side moves DOWN 3 from R1:2 (−1 base for farmer +1, −2 for the ♥5)
+        assert new_levels[0] == "B3:2", f"dealer expected B3:2, got {new_levels[0]}"
+        # Farmer side moves UP 1 (base farmer win), red five does not mirror to farmers
+        assert new_levels[1] == "R1:4", f"farmer expected R1:4, got {new_levels[1]}"
+
+    def test_no_red_five_baseline(self):
+        """Farmer score 200 with no red fives => dealer −1, farmer +1."""
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+
+        # 20×K = 200 points, no fives
+        cards = [Card(Suit.SPADES, Rank.KING, d % 3) for d in range(20)]
+        game, state = self._state_with_trick(cards)
+        new_levels = game._apply_level_changes(state)
+
+        assert new_levels[0] == "B1:2", f"dealer expected B1:2, got {new_levels[0]}"
+        assert new_levels[1] == "R1:4", f"farmer expected R1:4, got {new_levels[1]}"

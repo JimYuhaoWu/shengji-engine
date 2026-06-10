@@ -3,7 +3,7 @@
 import random
 from typing import Dict, List, Optional, Tuple
 from .card import Card, Deck, count_identical_cards, get_identical_cards
-from .level import LEVEL_SEQ, step_level
+from .level import LEVEL_SEQ
 from .state import GameState
 from .types import GamePhase, Suit, Rank, Action, ActionType, TrickCombination, TrumpBid
 from .trump import is_level_card, is_trump, compare_cards, winning_card, trump_rank, non_trump_rank
@@ -755,94 +755,52 @@ class Game:
         base_score = sum(scoring_values.get(card.rank, 0) for card in buried_cards)
         return base_score * multiplier
 
+    def _player_sides(self, state: GameState) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
+        """Return (dealer_side, farmer_side) player-id tuples."""
+        dealer_side = tuple(sorted({state.dealer_id} | set(state.helper_players)))
+        farmer_side = tuple(p for p in range(6) if p not in dealer_side)
+        return dealer_side, farmer_side
+
+    def _farmer_captured_cards(self, state: GameState) -> Tuple[Card, ...]:
+        """All cards captured in tricks won by farmer-side players."""
+        _, farmer_side = self._player_sides(state)
+        farmer_set = set(farmer_side)
+        captured: List[Card] = []
+        for winner_id, cards in state.tricks_won:
+            if winner_id in farmer_set:
+                captured.extend(cards)
+        return tuple(captured)
+
     def _calculate_farmer_score(self, state: GameState) -> int:
-        """Calculate total score for the farmer side.
+        """Total scoring-card points captured by the farmer side.
 
-        Farmers are all players except dealer and helpers.
-        Sum all scoring cards captured by farmer players.
+        Delegates to scoring.compute_farmer_score (5=5, 10=10, K=10).
         """
-        farmer_players = set(range(6)) - {state.dealer_id} - set(state.helper_players)
-
-        total_score = 0
-        scoring_values = {Rank.FIVE: 5, Rank.TEN: 10, Rank.KING: 10}
-
-        for winner_id, cards in state.tricks_won:
-            if winner_id in farmer_players:
-                for card in cards:
-                    total_score += scoring_values.get(card.rank, 0)
-
-        return total_score
-
-    def _get_level_change(self, farmer_score: int) -> int:
-        """Determine level change based on farmer score.
-
-        Returns:
-            Positive for farmer win, negative for dealer win, 0 for no change
-        """
-        if farmer_score == 0:
-            return -3  # Dealer side +3
-        elif farmer_score <= 55:
-            return -2  # Dealer side +2
-        elif farmer_score <= 115:
-            return -1  # Dealer side +1
-        elif farmer_score <= 175:
-            return 0   # Farmer win (neutral, resets)
-        elif farmer_score <= 235:
-            return 1   # Farmer side +1
-        elif farmer_score <= 295:
-            return 2   # Farmer side +2
-        else:
-            return 3   # Farmer side +3
-
-    def _count_red_fives(self, state: GameState) -> Tuple[int, int]:
-        """Count red fives (5♥ and 5♦) captured by farmers.
-
-        Returns:
-            (count_5♥, count_5♦)
-        """
-        farmer_players = set(range(6)) - {state.dealer_id} - set(state.helper_players)
-
-        count_hearts_five = 0
-        count_diamonds_five = 0
-
-        for winner_id, cards in state.tricks_won:
-            if winner_id in farmer_players:
-                for card in cards:
-                    if card.rank == Rank.FIVE:
-                        if card.suit == Suit.HEARTS:
-                            count_hearts_five += 1
-                        elif card.suit == Suit.DIAMONDS:
-                            count_diamonds_five += 1
-
-        return (count_hearts_five, count_diamonds_five)
+        return compute_farmer_score(self._farmer_captured_cards(state))
 
     def _apply_level_changes(self, state: GameState) -> Tuple[str, ...]:
         """Calculate new player levels based on scoring.
 
+        Delegates to the tested scoring.py functions so the live game loop and
+        the unit-tested scoring logic cannot diverge. Red-five penalties are
+        applied against the dealer side per the rules.
+
         Returns:
             Updated player_levels tuple
         """
-        farmer_score = self._calculate_farmer_score(state)
-        base_change = self._get_level_change(farmer_score)
+        farmer_cards = self._farmer_captured_cards(state)
+        farmer_score = compute_farmer_score(farmer_cards)
+        hearts_fives, diamonds_fives = count_red_fives(farmer_cards)
+        dealer_side, farmer_side = self._player_sides(state)
 
-        # Apply red five penalties (subtracted from dealer side, which means added to farmer side)
-        hearts_fives, diamonds_fives = self._count_red_fives(state)
-        red_five_penalty = hearts_fives * 2 + diamonds_fives * 1
-        total_change = base_change - red_five_penalty
-
-        # Update all players
-        new_levels = []
-        for player_id in range(6):
-            current_level = state.player_levels[player_id]
-            if player_id == state.dealer_id or player_id in state.helper_players:
-                # Dealer side: opposite of farmer change
-                new_level = step_level(current_level, -total_change)
-            else:
-                # Farmer side
-                new_level = step_level(current_level, total_change)
-            new_levels.append(new_level)
-
-        return tuple(new_levels)
+        level_changes = compute_level_changes(
+            farmer_score,
+            hearts_fives,
+            diamonds_fives,
+            dealer_side,
+            farmer_side,
+        )
+        return apply_level_changes(state.player_levels, level_changes)
 
     def _determine_next_dealer(self, state: GameState) -> int:
         """Determine the dealer for the next game.
