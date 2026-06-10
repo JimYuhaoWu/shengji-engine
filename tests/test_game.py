@@ -348,3 +348,89 @@ class TestTrickWinner:
             (2, fill), (3, fill), (4, fill), (5, fill),
         )
         assert self._winner(trick) == 0  # leader keeps it (tractor-3 can't match limo-2)
+
+
+class TestTrumpHierarchyTractorInTrick:
+    """Cross-suit trump-hierarchy tractors must be recognized in the trick logic."""
+
+    def test_is_tractor_cross_suit_trump(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        game = Game(num_players=6)
+        H, D = Suit.HEARTS, Suit.DIAMONDS
+        # 7 is the level, hearts trump: 7♥ (trump level) + 3♦ (lieutenant) are consecutive.
+        cards = (Card(H, Rank.SEVEN, 0), Card(H, Rank.SEVEN, 1),
+                 Card(D, Rank.THREE, 0), Card(D, Rank.THREE, 1))
+        assert game._is_tractor(cards, H, "7") is True
+        assert game._detect_combination_type(cards, H, "7") == "tractor"
+
+    def test_joker_pairs_form_tractor(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        game = Game(num_players=6)
+        cards = (Card(Suit.JOKER, Rank.SMALL_JOKER, 0), Card(Suit.JOKER, Rank.SMALL_JOKER, 1),
+                 Card(Suit.JOKER, Rank.LARGE_JOKER, 0), Card(Suit.JOKER, Rank.LARGE_JOKER, 1))
+        assert game._is_tractor(cards, Suit.HEARTS, "7") is True
+
+    def test_non_consecutive_trump_hierarchy_not_tractor(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        game = Game(num_players=6)
+        H = Suit.HEARTS
+        # trump level (7♥) and Captain (3♥) are NOT adjacent (Lieutenant sits between).
+        cards = (Card(H, Rank.SEVEN, 0), Card(H, Rank.SEVEN, 1),
+                 Card(H, Rank.THREE, 0), Card(H, Rank.THREE, 1))
+        assert game._is_tractor(cards, H, "7") is False
+
+
+class TestSoloHelperSealing:
+    """A player who plays 2+ copies of the called card first is the only helper."""
+
+    def _state(self):
+        from shengji.types import Suit
+        game = Game(num_players=6)
+        base = game.reset().copy(called_rank="K", called_suit=Suit.CLUBS,
+                                 helper_players=(), helpers_locked=False)
+        return game, base
+
+    def test_sole_helper_sealed_blocks_second(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        game, base = self._state()
+        C = Suit.CLUBS
+        helpers, locked = game._update_helpers(base, 2, (Card(C, Rank.KING, 0), Card(C, Rank.KING, 1)))
+        assert helpers == (2,) and locked is True
+        # A later different player playing the called card cannot become helper #2.
+        sealed = base.copy(helper_players=helpers, helpers_locked=locked)
+        helpers2, locked2 = game._update_helpers(sealed, 4, (Card(C, Rank.KING, 2),))
+        assert helpers2 == (2,) and locked2 is True
+
+    def test_two_distinct_helpers_seal(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        game, base = self._state()
+        C = Suit.CLUBS
+        h1, l1 = game._update_helpers(base, 1, (Card(C, Rank.KING, 0),))
+        assert h1 == (1,) and l1 is False
+        s1 = base.copy(helper_players=h1, helpers_locked=l1)
+        h2, l2 = game._update_helpers(s1, 3, (Card(C, Rank.KING, 1),))
+        assert h2 == (1, 3) and l2 is True
+
+
+class TestCallHelperFiltering:
+    """Dealer cannot call a non-trump card whose 3 copies it holds entirely."""
+
+    def test_fully_held_card_not_callable(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank, GamePhase
+        game = Game(num_players=6)
+        base = game.reset()
+        C, H = Suit.CLUBS, Suit.HEARTS
+        hands = list(base.hands)
+        hands[0] = (Card(C, Rank.KING, 0), Card(C, Rank.KING, 1), Card(C, Rank.KING, 2))
+        state = base.copy(phase=GamePhase.CALL_HELPER, dealer_id=0,
+                          trump_suit=H, trump_level="2", hands=tuple(hands), buried_cards=())
+        actions = game._get_legal_actions_call_helper(state)
+        called = {(a.cards[0].rank, a.cards[0].suit) for a in actions}
+        assert (Rank.KING, C) not in called          # all 3 held -> not callable
+        assert (Rank.QUEEN, C) in called              # not fully held -> callable

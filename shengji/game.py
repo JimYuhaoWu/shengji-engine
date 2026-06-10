@@ -6,8 +6,15 @@ from .card import Card, Deck, count_identical_cards, get_identical_cards
 from .level import LEVEL_SEQ
 from .state import GameState
 from .types import GamePhase, Suit, Rank, Action, ActionType, TrickCombination, TrumpBid
-from .trump import is_level_card, is_trump, compare_cards, winning_card, trump_rank, non_trump_rank
-from .rules import CardCombination, get_card_combinations, can_follow_suit, can_trump, get_legal_plays_when_following, get_legal_trump_bids
+from .trump import (
+    is_level_card, is_trump, is_captain, is_lieutenant,
+    compare_cards, winning_card, trump_rank, non_trump_rank,
+)
+from .rules import (
+    CardCombination, get_card_combinations, can_follow_suit, can_trump,
+    get_legal_plays_when_following, get_legal_trump_bids,
+    get_rank_order_for_suit, NON_TRUMP_RANK_ORDER,
+)
 from .scoring import compute_farmer_score, compute_level_changes, count_red_fives, apply_level_changes
 
 
@@ -290,28 +297,40 @@ class Game:
         return tuple(actions)
 
     def _get_legal_actions_call_helper(self, state: GameState) -> Tuple[Action, ...]:
-        """Get legal helper card calling actions for dealer.
+        """Get legal helper-card calling actions for the dealer.
 
-        Dealer can call any non-trump card (identified by rank+suit only).
+        The dealer may call any non-trump card (identified by rank+suit only),
+        EXCEPT a card whose three copies are all unavailable to the other players
+        (entirely in the dealer's own hand and/or the buried kitty) — calling such
+        a card could never produce a helper. If that filter leaves nothing
+        callable (practically impossible), fall back to all non-trump cards.
         """
-        actions: List[Action] = []
+        from collections import Counter
+
         trump_level = state.trump_level
 
-        # Collect all possible non-trump cards that could be called
+        # Copies that are NOT available to other players (dealer's hand + buried).
+        unavailable = Counter(
+            (c.rank, c.suit)
+            for c in list(state.hands[state.dealer_id]) + list(state.buried_cards)
+        )
+
+        actions: List[Action] = []
+        fallback: List[Action] = []
         for suit in [Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS, Suit.SPADES]:
             for rank in Rank:
-                if rank == Rank.LARGE_JOKER or rank == Rank.SMALL_JOKER:
+                if rank in (Rank.LARGE_JOKER, Rank.SMALL_JOKER):
                     continue
-                # Check if this rank+suit combo is non-trump
                 card = Card(suit, rank, 0)
-                if not is_trump(card, state.trump_suit, trump_level):
-                    # Store as action with rank and suit (deck_id doesn't matter for calling)
-                    actions.append(Action(
-                        action_type=ActionType.CALL_HELPER,
-                        cards=(card,)  # Just one card representation (deck_id=0)
-                    ))
+                if is_trump(card, state.trump_suit, trump_level):
+                    continue
+                action = Action(action_type=ActionType.CALL_HELPER, cards=(card,))
+                fallback.append(action)
+                # At least one copy must be reachable by another player.
+                if unavailable[(rank, suit)] < 3:
+                    actions.append(action)
 
-        return tuple(actions)
+        return tuple(actions) if actions else tuple(fallback)
 
     def _get_legal_actions_trick_playing(self, state: GameState) -> Tuple[Action, ...]:
         """Get legal plays for current player in trick playing phase."""
@@ -572,15 +591,10 @@ class Game:
         called_rank = called_card.rank.value
         called_suit = called_card.suit
 
-        # Check if called card exists in the game (not all buried/in dealer hand)
-        # Count copies of called card in hands and buried
-        called_count = 0
-        for hand in state.hands:
-            called_count += sum(1 for c in hand if c.rank == called_card.rank and c.suit == called_suit)
-        called_count += sum(1 for c in state.buried_cards if c.rank == called_card.rank and c.suit == called_suit)
-
-        # If all 3 copies are with dealer or buried, there are no helpers
-        # (This is determined after cards are visible, but we can check now)
+        # The legal-action generator already prevents calling a card whose three
+        # copies are all in the dealer's hand/kitty, so a helper is always
+        # reachable in principle. (If all copies still end up buried/with the
+        # dealer, no one plays the card and there are simply no helpers.)
 
         # Transition to TRICK_PLAYING with dealer as first player
         new_state = state.copy(
@@ -609,7 +623,7 @@ class Game:
         current_trick = state.current_trick + (trick_play,)
 
         # Update helpers if called card is played
-        new_helpers = self._update_helpers(state, state.current_player, action.cards)
+        new_helpers, new_helpers_locked = self._update_helpers(state, state.current_player, action.cards)
 
         # If trick is complete (6 cards), determine winner and move to next trick
         if len(current_trick) >= 6:
@@ -649,6 +663,7 @@ class Game:
                     hands=tuple(new_hands),
                     tricks_won=final_tricks_won,
                     helper_players=new_helpers,
+                    helpers_locked=new_helpers_locked,
                     kitty_multiplier=kitty_multiplier,
                 )
 
@@ -671,6 +686,7 @@ class Game:
                     current_trick=(),
                     tricks_won=tricks_won,
                     helper_players=new_helpers,
+                    helpers_locked=new_helpers_locked,
                     legal_actions=self._get_legal_actions_trick_playing(state.copy(hands=tuple(new_hands), current_player=next_player)),
                 )
                 return new_state
@@ -683,6 +699,7 @@ class Game:
                 current_player=next_player,
                 current_trick=current_trick,
                 helper_players=new_helpers,
+                helpers_locked=new_helpers_locked,
                 legal_actions=self._get_legal_actions_trick_playing(state.copy(hands=tuple(new_hands), current_player=next_player, current_trick=current_trick)),
             )
             return new_state
@@ -735,39 +752,104 @@ class Game:
 
         return best_idx
 
+    def _trump_ladder(self, trump_suit: Suit, trump_level: str) -> list:
+        """Ordered (low -> high) list of trump 'tier' keys.
+
+        Adjacent entries are consecutive trumps, which lets tractors/limos span
+        physical suits within the trump domain (e.g. A♥ next to a non-trump level
+        card, the trump level next to the Lieutenant, the two Jokers, 5♦ then 5♥).
+        """
+        low_to_high = list(reversed(NON_TRUMP_RANK_ORDER))  # 2,3,4,...,A
+        level_rank = Rank(trump_level)
+        regular = []
+        for r in low_to_high:
+            if r == level_rank:        # the level is its own (trump-level) tier
+                continue
+            if r == Rank.THREE:        # 3 of the trump suit is the Captain
+                continue
+            if r == Rank.FIVE and trump_suit in (Suit.HEARTS, Suit.DIAMONDS):
+                continue               # 5 of a red trump suit is always-trump (5♥/5♦)
+            regular.append(("reg", r))
+        return regular + [
+            ("nontrump_level",), ("trump_level",), ("lieutenant",), ("captain",),
+            ("small_joker",), ("large_joker",), ("5d",), ("5h",),
+        ]
+
+    def _trump_tier(self, card: Card, trump_suit: Suit, trump_level: str):
+        """Tier key of a trump card within :meth:`_trump_ladder` (or None)."""
+        if card.rank == Rank.FIVE and card.suit == Suit.HEARTS:
+            return ("5h",)
+        if card.rank == Rank.FIVE and card.suit == Suit.DIAMONDS:
+            return ("5d",)
+        if card.rank == Rank.LARGE_JOKER:
+            return ("large_joker",)
+        if card.rank == Rank.SMALL_JOKER:
+            return ("small_joker",)
+        if is_captain(card, trump_suit):
+            return ("captain",)
+        if is_lieutenant(card, trump_suit):
+            return ("lieutenant",)
+        if is_level_card(card, trump_level):
+            return ("trump_level",) if card.suit == trump_suit else ("nontrump_level",)
+        if card.suit == trump_suit:
+            return ("reg", card.rank)
+        return None
+
+    def _logical_runs(self, cards, group_size: int, trump_suit: Suit, trump_level: str):
+        """Maximal consecutive runs of (rank,suit) groups of size >= ``group_size``.
+
+        Cards are partitioned into logical suits — each non-trump suit, plus a
+        single TRUMP domain ordered by :meth:`_trump_ladder` — so trump tractors
+        and limos may span physical suits (7♥7♥ + 3♦3♦, the two Jokers, etc.).
+        Returns a list of ``(run_length, cards_in_run)`` where ``run_length`` is
+        the number of consecutive groups.
+        """
+        from collections import Counter, defaultdict
+
+        counts = Counter((c.rank, c.suit) for c in cards)
+        ladder_pos = {t: i for i, t in enumerate(self._trump_ladder(trump_suit, trump_level))}
+
+        buckets = defaultdict(list)  # logical_suit -> [(index, rank, suit)]
+        for (rank, suit), n in counts.items():
+            if n < group_size:
+                continue
+            card = Card(suit, rank, 0)
+            if is_trump(card, trump_suit, trump_level):
+                tier = self._trump_tier(card, trump_suit, trump_level)
+                if tier in ladder_pos:
+                    buckets["TRUMP"].append((ladder_pos[tier], rank, suit))
+            else:
+                order = get_rank_order_for_suit(suit, trump_suit, trump_level)
+                if rank in order:
+                    buckets[suit].append((order.index(rank), rank, suit))
+
+        runs = []
+        for items in buckets.values():
+            items.sort(key=lambda t: t[0])
+            i = 0
+            while i < len(items):
+                j = i + 1
+                while j < len(items) and items[j][0] == items[j - 1][0] + 1:
+                    j += 1
+                run_cards = []
+                for _, rank, suit in items[i:j]:
+                    run_cards.extend(
+                        [c for c in cards if c.rank == rank and c.suit == suit][:group_size]
+                    )
+                runs.append((j - i, run_cards))
+                i = j
+        return runs
+
     def _max_run_at_group_size(
         self, cards, group_size: int, trump_suit: Suit, trump_level: str
     ) -> int:
         """Longest consecutive run of ranks that each have >= ``group_size`` copies.
 
-        Returns 0 if no rank reaches ``group_size``. Consecutiveness is evaluated
-        per suit using that suit's rank ordering (so a tractor/limo must be one
-        suit, matching the rest of the engine's combo detection).
+        Returns 0 if no rank reaches ``group_size``. Trumps form a single logical
+        suit (via the trump ladder), so cross-suit trump tractors/limos count.
         """
-        from collections import Counter
-        from .rules import get_rank_order_for_suit
-
-        best_run = 0
-        for suit in {c.suit for c in cards}:
-            counts = Counter(c.rank for c in cards if c.suit == suit)
-            rank_order = get_rank_order_for_suit(suit, trump_suit, trump_level)
-            qualifying = sorted(
-                (r for r, n in counts.items() if n >= group_size),
-                key=lambda r: rank_order.index(r) if r in rank_order else 999,
-            )
-            i = 0
-            while i < len(qualifying):
-                j = i + 1
-                while (
-                    j < len(qualifying)
-                    and qualifying[j] in rank_order
-                    and qualifying[j - 1] in rank_order
-                    and rank_order.index(qualifying[j]) == rank_order.index(qualifying[j - 1]) + 1
-                ):
-                    j += 1
-                best_run = max(best_run, j - i)
-                i = j
-        return best_run
+        runs = self._logical_runs(cards, group_size, trump_suit, trump_level)
+        return max((run_len for run_len, _ in runs), default=0)
 
     def _deciding_signature(
         self, cards, trump_suit: Suit, trump_level: str
@@ -854,13 +936,12 @@ class Game:
         # Largest identical group (covers single/pair/trio).
         best = max(Counter((c.rank, c.suit) for c in cards).values())
 
-        # Longest tractor / limo within each suit present (covers consecutive combos).
-        for suit in {c.suit for c in cards}:
-            same_suit = [c for c in cards if c.suit == suit]
-            for tractor in self._find_tractors_in_suit(same_suit, trump_suit, trump_level):
-                best = max(best, len(tractor))
-            for limo in self._find_limos_in_suit(same_suit, trump_suit, trump_level):
-                best = max(best, len(limo))
+        # Longest tractor / limo (logical-suit aware, so trump combos that span
+        # physical suits are counted too).
+        for tractor in self._find_tractors_in_suit(cards, trump_suit, trump_level):
+            best = max(best, len(tractor))
+        for limo in self._find_limos_in_suit(cards, trump_suit, trump_level):
+            best = max(best, len(limo))
 
         return best
 
@@ -986,61 +1067,32 @@ class Game:
         return "multi"
 
     def _is_tractor(self, cards: Tuple[Card, ...], trump_suit: Suit, trump_level: str) -> bool:
-        """Check if cards form a valid tractor (consecutive pairs)."""
-        # Extract pairs
+        """Check if cards form a valid tractor (>= 2 consecutive pairs).
+
+        Logical-suit aware, so trump-hierarchy tractors that span physical suits
+        (e.g. 7♥7♥ + 3♦3♦) are recognized.
+        """
         from collections import Counter
-        rank_suit_counts = Counter((c.rank, c.suit) for c in cards)
 
-        pairs = [rs for rs, count in rank_suit_counts.items() if count == 2]
-        if len(pairs) < 2:
-            return False
-
-        # Check if pairs are consecutive in the suit's rank ordering
-        suit = pairs[0][1]
-        for rank_suit, count in rank_suit_counts.items():
-            if rank_suit[1] != suit or count != 2:
-                return False
-
-        # Get rank order for this suit
-        from .rules import get_rank_order_for_suit
-        rank_order = get_rank_order_for_suit(suit, trump_suit, trump_level)
-
-        pair_ranks = sorted([rs[0] for rs in pairs], key=lambda r: rank_order.index(r) if r in rank_order else -1)
-
-        # Check if consecutive
-        for i in range(len(pair_ranks) - 1):
-            if rank_order.index(pair_ranks[i]) + 1 != rank_order.index(pair_ranks[i + 1]):
-                return False
-
-        return True
+        counts = Counter((c.rank, c.suit) for c in cards)
+        if len(counts) < 2 or any(n != 2 for n in counts.values()):
+            return False  # must be all pairs, at least two of them
+        return any(
+            run_len == len(counts)
+            for run_len, _ in self._logical_runs(cards, 2, trump_suit, trump_level)
+        )
 
     def _is_limo(self, cards: Tuple[Card, ...], trump_suit: Suit, trump_level: str) -> bool:
-        """Check if cards form a valid limo (consecutive trios)."""
+        """Check if cards form a valid limo (>= 2 consecutive trios), logical-suit aware."""
         from collections import Counter
-        rank_suit_counts = Counter((c.rank, c.suit) for c in cards)
 
-        trios = [rs for rs, count in rank_suit_counts.items() if count == 3]
-        if len(trios) < 2:
-            return False
-
-        # Check if trios are in same suit and consecutive
-        suit = trios[0][1]
-        for rank_suit, count in rank_suit_counts.items():
-            if rank_suit[1] != suit or count != 3:
-                return False
-
-        # Get rank order for this suit
-        from .rules import get_rank_order_for_suit
-        rank_order = get_rank_order_for_suit(suit, trump_suit, trump_level)
-
-        trio_ranks = sorted([rs[0] for rs in trios], key=lambda r: rank_order.index(r) if r in rank_order else -1)
-
-        # Check if consecutive
-        for i in range(len(trio_ranks) - 1):
-            if rank_order.index(trio_ranks[i]) + 1 != rank_order.index(trio_ranks[i + 1]):
-                return False
-
-        return True
+        counts = Counter((c.rank, c.suit) for c in cards)
+        if len(counts) < 2 or any(n != 3 for n in counts.values()):
+            return False  # must be all trios, at least two of them
+        return any(
+            run_len == len(counts)
+            for run_len, _ in self._logical_runs(cards, 3, trump_suit, trump_level)
+        )
 
     def _get_legal_following_plays(self, hand: list, led_suit: Suit, led_combo_type: str, trick_size: int,
                                    trump_suit: Suit, trump_level: str) -> List[Tuple[Card, ...]]:
@@ -1224,148 +1276,60 @@ class Game:
         return trios
 
     def _find_tractors_in_suit(self, cards: list, trump_suit: Suit, trump_level: str) -> List[List[Card]]:
-        """Find all consecutive pair groups (tractors) in cards of the same suit."""
-        if len(cards) < 4:
-            return []
+        """Find all tractors (>= 2 consecutive pairs) among ``cards``.
 
-        from collections import Counter
-        from .rules import get_rank_order_for_suit
-
-        # Get the suit
-        suit = cards[0].suit
-
-        # Count cards by rank
-        rank_counts = Counter(c.rank for c in cards if c.suit == suit)
-
-        # Get rank order for this suit
-        rank_order = get_rank_order_for_suit(suit, trump_suit, trump_level)
-
-        # Find all pairs
-        pair_ranks = [rank for rank, count in rank_counts.items() if count >= 2]
-        if len(pair_ranks) < 2:
-            return []
-
-        # Sort by rank order
-        pair_ranks.sort(key=lambda r: rank_order.index(r) if r in rank_order else 999)
-
-        # Find consecutive sequences
-        tractors = []
-        i = 0
-        while i < len(pair_ranks):
-            sequence = [pair_ranks[i]]
-            j = i + 1
-            while j < len(pair_ranks):
-                if rank_order.index(pair_ranks[j]) == rank_order.index(pair_ranks[j - 1]) + 1:
-                    sequence.append(pair_ranks[j])
-                    j += 1
-                else:
-                    break
-
-            if len(sequence) >= 2:
-                # Build tractor from this sequence
-                tractor_cards = []
-                for rank in sequence:
-                    rank_cards = [c for c in cards if c.rank == rank and c.suit == suit][:2]
-                    tractor_cards.extend(rank_cards)
-                tractors.append(tractor_cards)
-
-            i = j if j > i + 1 else i + 1
-
-        return tractors
+        Trumps are treated as one logical suit via the trump ladder, so a tractor
+        may span physical suits (e.g. 7♥7♥ + 3♦3♦ when 7 is the level, or a pair
+        of each Joker). Non-trump tractors stay within their own suit.
+        """
+        return [
+            run_cards
+            for run_len, run_cards in self._logical_runs(cards, 2, trump_suit, trump_level)
+            if run_len >= 2
+        ]
 
     def _find_limos_in_suit(self, cards: list, trump_suit: Suit, trump_level: str) -> List[List[Card]]:
-        """Find all consecutive trio groups (limos) in cards of the same suit."""
-        if len(cards) < 6:
-            return []
+        """Find all limos (>= 2 consecutive trios) among ``cards`` (logical-suit aware)."""
+        return [
+            run_cards
+            for run_len, run_cards in self._logical_runs(cards, 3, trump_suit, trump_level)
+            if run_len >= 2
+        ]
 
-        from collections import Counter
-        from .rules import get_rank_order_for_suit
+    def _update_helpers(
+        self, state: GameState, player_id: int, cards_played: Tuple[Card, ...]
+    ) -> Tuple[Tuple[int, ...], bool]:
+        """Update the helper set when a player plays cards.
 
-        # Get the suit
-        suit = cards[0].suit
-
-        # Count cards by rank
-        rank_counts = Counter(c.rank for c in cards if c.suit == suit)
-
-        # Get rank order for this suit
-        rank_order = get_rank_order_for_suit(suit, trump_suit, trump_level)
-
-        # Find all trios
-        trio_ranks = [rank for rank, count in rank_counts.items() if count >= 3]
-        if len(trio_ranks) < 2:
-            return []
-
-        # Sort by rank order
-        trio_ranks.sort(key=lambda r: rank_order.index(r) if r in rank_order else 999)
-
-        # Find consecutive sequences
-        limos = []
-        i = 0
-        while i < len(trio_ranks):
-            sequence = [trio_ranks[i]]
-            j = i + 1
-            while j < len(trio_ranks):
-                if rank_order.index(trio_ranks[j]) == rank_order.index(trio_ranks[j - 1]) + 1:
-                    sequence.append(trio_ranks[j])
-                    j += 1
-                else:
-                    break
-
-            if len(sequence) >= 2:
-                # Build limo from this sequence
-                limo_cards = []
-                for rank in sequence:
-                    rank_cards = [c for c in cards if c.rank == rank and c.suit == suit][:3]
-                    limo_cards.extend(rank_cards)
-                limos.append(limo_cards)
-
-            i = j if j > i + 1 else i + 1
-
-        return limos
-
-    def _update_helpers(self, state: GameState, player_id: int, cards_played: Tuple[Card, ...]) -> Tuple[int, ...]:
-        """Update helper list when a player plays cards.
-
-        Returns updated helper_players tuple.
+        Returns ``(helper_players, helpers_locked)``.
         Rules:
-        - First player to play called card becomes helper #1
-        - Second player to play called card becomes helper #2
-        - If someone plays 2+ copies before anyone else plays it, they become sole helper
+        - First player to play the called card becomes helper #1.
+        - The second *different* player to play it becomes helper #2 (which then
+          locks the set).
+        - If a player plays 2+ copies of the called card BEFORE anyone else has
+          played it, that player is the SOLE helper and the set is locked
+          immediately (no second helper may join).
         """
-        if not state.called_rank or not state.called_suit:
-            return state.helper_players
+        helpers = state.helper_players
+        locked = state.helpers_locked
 
-        # Count how many called cards this player is playing
+        if locked or not state.called_rank or not state.called_suit:
+            return helpers, locked
+
         called_card_count = sum(
             1 for c in cards_played
             if c.rank.value == state.called_rank and c.suit == state.called_suit
         )
-
         if called_card_count == 0:
-            # Not playing called card
-            return state.helper_players
+            return helpers, locked
 
-        current_helpers = list(state.helper_players)
-
-        # Check if this is the first called card played
-        if len(current_helpers) == 0:
-            # No helpers yet
+        if len(helpers) == 0:
             if called_card_count >= 2:
-                # Playing 2+ copies - become sole helper
-                return (player_id,)
-            else:
-                # Playing 1 copy - become first helper
-                return (player_id,)
+                # Sole helper: 2+ copies before anyone else played it -> sealed.
+                return (player_id,), True
+            return (player_id,), False  # first helper; a second may still join
 
-        elif len(current_helpers) == 1:
-            # Already have one helper
-            if current_helpers[0] == player_id:
-                # Same player playing again - no change
-                return current_helpers
-            else:
-                # Different player - becomes second helper
-                return (current_helpers[0], player_id)
-
-        else:
-            # Already have 2 helpers, no changes
-            return current_helpers
+        # len(helpers) == 1 (not locked, so the lone helper was not a sole helper)
+        if player_id == helpers[0]:
+            return helpers, locked  # same player again, no change
+        return (helpers[0], player_id), True  # second helper -> sealed

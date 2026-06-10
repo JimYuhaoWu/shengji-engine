@@ -42,6 +42,7 @@ class GameState:
     called_rank: Optional[str] = None  # Rank of called card (e.g., "5", "K")
     called_suit: Optional[Suit] = None  # Suit of called card
     helper_players: Tuple[int, ...] = ()  # player ids who are helpers (0, 1, or 2)
+    helpers_locked: bool = False  # True once the helper set is final (2 found, or a sole helper)
 
     # Trick tracking
     current_trick: Tuple[Tuple[int, Tuple[Card, ...]], ...] = ()  # [(player_id, cards), ...]
@@ -79,6 +80,7 @@ class GameState:
             'called_rank': self.called_rank,
             'called_suit': self.called_suit,
             'helper_players': self.helper_players,
+            'helpers_locked': self.helpers_locked,
             'current_trick': self.current_trick,
             'tricks_won': self.tricks_won,
             'player_levels': self.player_levels,

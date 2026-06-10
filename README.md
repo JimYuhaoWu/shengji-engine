@@ -14,16 +14,24 @@ A Python library implementing the complete game logic for 拖拉机 as played by
 
 ## Project Status
 
-**Foundation Complete** — 123 passing tests
+**Playable end-to-end** — 175 passing tests; random full games complete from deal to scoring.
 
 - ✅ Card system (deck handling, card equality)
 - ✅ Level progression (R1:2 → R5:A, basement B1-B10)
 - ✅ Trump ranking (5♥ > 5♦ > Jokers > Captain > Lieutenant > Level > A-2)
 - ✅ Card combinations (single, pair, trio, tractor, **limo/钢板/豪车**)
-- ✅ Trump hierarchy tractors (e.g., 7♥+7♥+3♦+3♦)
 - ✅ Game state (immutable GameState, 26 cards/player + 6-card kitty)
-- ✅ Card dealing (random shuffle, proper distribution)
-- 🚧 Game loop (trump declaration, kitty, call helper, trick playing, scoring)
+- ✅ Card dealing (card-by-card with two-phase trump declaration)
+- ✅ Game loop (trump declaration → kitty → call helper → trick playing → scoring → next game)
+- ✅ Trick winner with combination-type matching (limo-2 ≠ tractor-3); scoring with asymmetric level changes, red-five penalties, and the kitty multiplier
+- ✅ Optional `ShengJiEnv` Gym-style wrapper
+
+### Known gaps / approximations
+
+- **Solo-helper rule not sealed.** A player who plays 2+ copies of the called card before anyone else should be the *only* helper, but the engine can still add a second helper later.
+- **Trump-hierarchy tractors only half-wired.** Cross-suit hierarchy tractors (e.g. `7♥7♥ + 3♦3♦` when 7 is the level) are recognized when *leading* a trick, but the follow-play generator and trick-winner logic detect tractors per physical suit, so such combos aren't matched/won correctly.
+- **"No helpers when all three called copies are buried"** is not enforced (the dealer isn't prevented from calling a card it holds/buried all copies of). The natural outcome is still "no helpers", so impact is low.
+- **Kitty burial** enumerates all C(32,6) ≈ 906k legal burials — correct but heavy for a UI/agent; could be sampled or pruned.
 
 ## Game Rules Implemented
 
