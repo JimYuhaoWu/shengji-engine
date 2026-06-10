@@ -8,7 +8,7 @@ A pure Python game engine for six-player 拖拉机 (Sheng Ji). No UI, no network
 
 1. **No I/O anywhere in this library.** No `print()`, no file reads, no network calls.
 2. **GameState must be fully serializable** to JSON at all times. No object references that can't be `json.dumps()`-ed.
-3. **Never mutate state in place.** `game.step(action)` returns a new `GameState`. The old one is unchanged.
+3. **Never mutate state in place.** `game.step(state, action)` returns a new `(GameState, info)`; the input state is unchanged.
 4. **Every public function must have a test.** Write tests alongside code, not after.
 5. **Legal action generator is the most critical function.** It must be exhaustive (no legal move missing) and sound (no illegal move included). Test it obsessively.
 
@@ -51,6 +51,7 @@ rules.py         ← get_legal_actions(), determine_trick_winner()
 scoring.py       ← compute_score(), compute_level_changes()
 trump.py         ← trump card ordering, declaration resolution
 level.py         ← LEVEL_SEQ, step_level(), key_index(), level_display()
+env.py           ← ShengJiEnv: optional stateful Gym-style wrapper over Game
 ```
 
 **Dependency direction:** `game.py` imports everything. Nothing imports `game.py`. `rules.py` imports `card.py` and `trump.py`. `scoring.py` imports `level.py`. No circular imports.
@@ -328,14 +329,24 @@ def test_tractor_detection(): ...
 
 ### Integration Tests (full game loop)
 ```python
-# test_game.py
+# test_game.py — functional core: step(state, action) -> (state, info)
 def test_full_game_completes():
     game = Game(num_players=6)
-    state = game.reset()
-    while not done:
-        action = random.choice(state.legal_actions)
-        state, reward, done, info = game.step(action)
+    state = game.reset(dealer_id=0)
+    while state.phase != GamePhase.SCORING:
+        action = random.choice(state.legal_actions) if state.legal_actions else None
+        state, info = game.step(state, action)
     assert state.phase == GamePhase.SCORING
+
+# test_env.py — optional Gym wrapper: step(action) -> (obs, reward, done, info)
+def test_env_full_game():
+    env = ShengJiEnv()
+    env.reset(dealer_id=0)
+    done = False
+    while not done:
+        action = random.choice(env.legal_actions) if env.legal_actions else None
+        obs, reward, done, info = env.step(action)
+    assert obs.phase == GamePhase.SCORING
 
 def test_legal_actions_never_empty_mid_game():
     # During TRICK_PLAYING, legal_actions must never be empty

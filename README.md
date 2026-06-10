@@ -4,7 +4,7 @@ Pure Python game engine for six-player 拖拉机 (Sheng Ji / Upgrade / Tractor).
 
 ## What This Is
 
-A Python library implementing the complete game logic for 拖拉机 as played by a fixed six-player group. It exposes a clean `Game` interface following the OpenAI Gym convention so AI agents can plug in without knowing anything about the internals.
+A Python library implementing the complete game logic for 拖拉机 as played by a fixed six-player group. The core is a pure, immutable `Game` (state in → new state out); an optional `ShengJiEnv` wrapper adapts it to the OpenAI-Gym `(observation, reward, done, info)` convention so AI agents can plug in without knowing anything about the internals.
 
 ## What This Is Not
 
@@ -161,22 +161,56 @@ pip install -e ".[dev]"
 
 ## Usage
 
-```python
-from shengji.game import Game
-from shengji.types import Action, GamePhase
+### Functional core (immutable)
 
-# Create a new game
+`Game` is pure: you pass a state in and get a new state back. The old state is
+never mutated.
+
+```python
+from shengji import Game, GamePhase
+
 game = Game(num_players=6)
-state = game.reset()
+state = game.reset(dealer_id=0)
 
 print(state.phase)          # GamePhase.DEALING
 print(state.current_player) # 0
-print(state.legal_actions)  # list of Action objects
+print(state.legal_actions)  # tuple of Action objects
 
-# Step the game
+# step(state, action) -> (new_state, info). During DEALING you may pass
+# action=None to auto-deal the next round.
 action = state.legal_actions[0]
-state, reward, done, info = game.step(action)
+state, info = game.step(state, action)
+
+# The game is over when it reaches SCORING; `info` then carries the outcome.
+done = state.phase == GamePhase.SCORING
+# info == {"phase": ..., "current_player": ..., "farmer_score": ...,
+#          "next_dealer": ..., "game_over": True}  (at SCORING)
 ```
+
+### Optional Gym-style wrapper
+
+For reinforcement-learning consumers, `ShengJiEnv` adapts the functional core to
+the familiar stateful `(observation, reward, done, info)` convention. It stores
+the current state internally and delegates all rules to `Game`.
+
+```python
+from shengji import ShengJiEnv
+
+env = ShengJiEnv()
+obs = env.reset(dealer_id=0)            # observation is the GameState
+
+done = False
+while not done:
+    actions = env.legal_actions        # action mask for the current player
+    action = actions[0] if actions else None
+    obs, reward, done, info = env.step(action)
+
+print(env.render())                    # returns a text summary (does not print)
+```
+
+Reward is sparse (`0.0` every step): Sheng Ji is a six-player game with no single
+canonical agent, so the wrapper leaves reward shaping to the consumer and reports
+the terminal outcome (farmer score, next dealer, updated levels) in `info`.
 
 ## Project Structure
 
@@ -191,7 +225,8 @@ shengji-engine/
 │   ├── rules.py            # Legal action generator, trick winner determination
 │   ├── scoring.py          # Score calculation, level change computation
 │   ├── trump.py            # Trump ordering, trump declaration logic
-│   └── level.py            # Level system, LEVEL_SEQ, step_level
+│   ├── level.py            # Level system, LEVEL_SEQ, step_level
+│   └── env.py              # ShengJiEnv — optional Gym-style wrapper
 ├── tests/                  # pytest suite (unit + integration)
 │   ├── test_card.py
 │   ├── test_rules.py
@@ -199,6 +234,7 @@ shengji-engine/
 │   ├── test_trump.py
 │   ├── test_level.py
 │   ├── test_state.py
+│   ├── test_env.py
 │   └── test_game.py
 ├── examples/               # Runnable demo / integration scripts
 │   ├── full_game.py        # Play a complete game end-to-end
@@ -217,7 +253,7 @@ shengji-engine/
 
 - **Immutable state**: `GameState` is a frozen dataclass; `game.step()` returns a new state
 - **Separation of concerns**: `rules.py` knows nothing about levels; `level.py` knows nothing about cards
-- **Gym interface**: `reset()` / `step(action)` / `render()` so AI agents plug in directly
+- **Functional core + optional Gym wrapper**: `Game.reset(dealer_id) -> state` and `Game.step(state, action) -> (state, info)` keep the engine pure and immutable; `ShengJiEnv` adds a stateful `step(action) -> (obs, reward, done, info)` adapter for RL consumers
 - **Serializable state**: all state can be `json.dumps()`-ed for the server to broadcast
 
 ## Running Tests
