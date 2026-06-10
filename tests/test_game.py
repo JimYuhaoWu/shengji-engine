@@ -176,3 +176,60 @@ class TestLevelChangeScoring:
 
         assert new_levels[0] == "B1:2", f"dealer expected B1:2, got {new_levels[0]}"
         assert new_levels[1] == "R1:4", f"farmer expected R1:4, got {new_levels[1]}"
+
+
+class TestKittyMultiplier:
+    """Buried-kitty points go to the last-trick winner x2x the winning play's
+    largest component, and only count for farmers when a farmer wins it."""
+
+    def test_max_component_count(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+
+        game = Game(num_players=6)
+        ts, tl = Suit.HEARTS, "2"
+        S, R = Suit.SPADES, Rank
+        single = (Card(S, R.ACE, 0),)
+        pair = (Card(S, R.KING, 0), Card(S, R.KING, 1))
+        trio = (Card(S, R.KING, 0), Card(S, R.KING, 1), Card(S, R.KING, 2))
+        tractor = (Card(S, R.SEVEN, 0), Card(S, R.SEVEN, 1),
+                   Card(S, R.EIGHT, 0), Card(S, R.EIGHT, 1))
+        pair_singles = (Card(S, R.KING, 0), Card(S, R.KING, 1),
+                        Card(S, R.ACE, 0), Card(S, R.NINE, 0))
+
+        assert game._max_component_count(single, ts, tl) == 1
+        assert game._max_component_count(pair, ts, tl) == 2
+        assert game._max_component_count(trio, ts, tl) == 3
+        assert game._max_component_count(tractor, ts, tl) == 4
+        assert game._max_component_count(pair_singles, ts, tl) == 2
+
+    def test_kitty_bonus_farmer_wins_last_trick(self):
+        """Farmer wins last trick with a pair (x4); buried K (10) => 40 points."""
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+
+        game = Game(num_players=6)
+        state = game.reset()
+        pair = (Card(Suit.SPADES, Rank.SEVEN, 0), Card(Suit.SPADES, Rank.SEVEN, 1))
+        buried = (Card(Suit.CLUBS, Rank.KING, 0),)  # 10 points
+        # Engine appends buried to the last trick; player 1 (a farmer) won it.
+        state = state.copy(
+            dealer_id=0, helper_players=(), buried_cards=buried,
+            kitty_multiplier=4, tricks_won=((1, pair + buried),),
+        )
+        assert game._calculate_farmer_score(state) == 40  # 10 x 4
+
+    def test_kitty_bonus_zero_when_dealer_wins_last_trick(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+
+        game = Game(num_players=6)
+        state = game.reset()
+        pair = (Card(Suit.SPADES, Rank.SEVEN, 0), Card(Suit.SPADES, Rank.SEVEN, 1))
+        buried = (Card(Suit.CLUBS, Rank.KING, 0),)
+        # Dealer (player 0) won the last trick => farmers get nothing from kitty.
+        state = state.copy(
+            dealer_id=0, helper_players=(), buried_cards=buried,
+            kitty_multiplier=4, tricks_won=((0, pair + buried),),
+        )
+        assert game._calculate_farmer_score(state) == 0

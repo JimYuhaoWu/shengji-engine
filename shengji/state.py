@@ -36,6 +36,7 @@ class GameState:
 
     # Buried cards (during and after KITTY phase)
     buried_cards: Tuple[Card, ...] = ()  # 6 cards buried by dealer, revealed at end
+    kitty_multiplier: int = 1  # 2 x (max-component count of the last trick's winning play)
 
     # Helper card (identified by rank and suit only, ignoring deck_id)
     called_rank: Optional[str] = None  # Rank of called card (e.g., "5", "K")
@@ -74,6 +75,7 @@ class GameState:
             'trump_bids_history': self.trump_bids_history,
             'formal_bidding_started': self.formal_bidding_started,
             'buried_cards': self.buried_cards,
+            'kitty_multiplier': self.kitty_multiplier,
             'called_rank': self.called_rank,
             'called_suit': self.called_suit,
             'helper_players': self.helper_players,

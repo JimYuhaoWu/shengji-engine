@@ -627,19 +627,29 @@ class Game:
             # Check if all cards played (26 tricks max)
             cards_remaining = sum(len(h) for h in new_hands)
             if cards_remaining <= 0:
-                # Game complete - add buried cards to last trick winner
+                # Game complete - the last trick winner captures the buried kitty.
+                # The buried cards are appended to the last trick (this gives their
+                # base x1 points and counts any buried red fives once). The kitty
+                # POINT multiplier is applied separately in scoring via
+                # state.kitty_multiplier = 2 x (max-component count of the winning play).
                 final_tricks_won = tricks_won
                 if state.buried_cards and tricks_won:
-                    # Last trick winner also gets the buried cards (with multiplier applied in scoring)
                     last_winner_id, last_trick_cards = tricks_won[-1]
                     combined_cards = last_trick_cards + state.buried_cards
                     final_tricks_won = tricks_won[:-1] + ((last_winner_id, combined_cards),)
+
+                # Multiplier from the winning play of this final trick
+                winning_play = current_trick[winner_idx][1]
+                kitty_multiplier = 2 * self._max_component_count(
+                    winning_play, state.trump_suit, state.trump_level
+                )
 
                 # Calculate final state before SCORING
                 state_before_scoring = state.copy(
                     hands=tuple(new_hands),
                     tricks_won=final_tricks_won,
                     helper_players=new_helpers,
+                    kitty_multiplier=kitty_multiplier,
                 )
 
                 # Calculate new levels
@@ -738,22 +748,30 @@ class Game:
 
         return best_idx
 
-    def _get_max_card_count_in_combo(self, cards: Tuple[Card, ...]) -> int:
-        """Get the maximum card count in a combo (for buried card multiplier)."""
-        # For a simple combo, just return the count
-        # For complex combos (pair+single, tractor, etc.), return the count of largest component
-        # Simplified: just return the total count for now
-        return len(cards)
+    def _max_component_count(self, cards: Tuple[Card, ...], trump_suit: Suit, trump_level: str) -> int:
+        """Largest structural component (in cards) of a played combination.
 
-    def _compute_buried_card_score(self, buried_cards: Tuple[Card, ...], multiplier: int) -> int:
-        """Compute the score value of buried cards with multiplier.
-
-        Scoring cards: 5 (5 pts), 10 (10 pts), K (10 pts)
-        Multiplied by the max card count in the winning combo.
+        Used for the kitty-point multiplier: single=1, pair=2, trio=3,
+        tractor=its length (e.g. 4 or 6), limo=its length. For a multi-component
+        throw, the largest single component is returned (e.g. pair+2 singles => 2).
         """
-        scoring_values = {Rank.FIVE: 5, Rank.TEN: 10, Rank.KING: 10}
-        base_score = sum(scoring_values.get(card.rank, 0) for card in buried_cards)
-        return base_score * multiplier
+        if len(cards) <= 1:
+            return len(cards)
+
+        from collections import Counter
+
+        # Largest identical group (covers single/pair/trio).
+        best = max(Counter((c.rank, c.suit) for c in cards).values())
+
+        # Longest tractor / limo within each suit present (covers consecutive combos).
+        for suit in {c.suit for c in cards}:
+            same_suit = [c for c in cards if c.suit == suit]
+            for tractor in self._find_tractors_in_suit(same_suit, trump_suit, trump_level):
+                best = max(best, len(tractor))
+            for limo in self._find_limos_in_suit(same_suit, trump_suit, trump_level):
+                best = max(best, len(limo))
+
+        return best
 
     def _player_sides(self, state: GameState) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
         """Return (dealer_side, farmer_side) player-id tuples."""
@@ -771,25 +789,44 @@ class Game:
                 captured.extend(cards)
         return tuple(captured)
 
+    def _kitty_bonus_points(self, state: GameState) -> int:
+        """Extra farmer points from the multiplied kitty.
+
+        The buried kitty is already counted once via the last trick (see the
+        game-end handler), so this returns only the *additional* points from the
+        multiplier, and only when a farmer won the last trick.
+        """
+        if not state.tricks_won or state.kitty_multiplier <= 1:
+            return 0
+        last_winner_id = state.tricks_won[-1][0]
+        _, farmer_side = self._player_sides(state)
+        if last_winner_id not in set(farmer_side):
+            return 0
+        base_kitty_points = compute_farmer_score(state.buried_cards)
+        return base_kitty_points * (state.kitty_multiplier - 1)
+
     def _calculate_farmer_score(self, state: GameState) -> int:
         """Total scoring-card points captured by the farmer side.
 
-        Delegates to scoring.compute_farmer_score (5=5, 10=10, K=10).
+        Includes the multiplied kitty bonus when a farmer won the last trick.
+        Base card points delegate to scoring.compute_farmer_score (5=5, 10=10, K=10).
         """
-        return compute_farmer_score(self._farmer_captured_cards(state))
+        base = compute_farmer_score(self._farmer_captured_cards(state))
+        return base + self._kitty_bonus_points(state)
 
     def _apply_level_changes(self, state: GameState) -> Tuple[str, ...]:
         """Calculate new player levels based on scoring.
 
         Delegates to the tested scoring.py functions so the live game loop and
         the unit-tested scoring logic cannot diverge. Red-five penalties are
-        applied against the dealer side per the rules.
+        applied against the dealer side per the rules. Buried red fives count
+        once (via the last trick); the kitty multiplier affects points only.
 
         Returns:
             Updated player_levels tuple
         """
         farmer_cards = self._farmer_captured_cards(state)
-        farmer_score = compute_farmer_score(farmer_cards)
+        farmer_score = self._calculate_farmer_score(state)
         hearts_fives, diamonds_fives = count_red_fives(farmer_cards)
         dealer_side, farmer_side = self._player_sides(state)
 
