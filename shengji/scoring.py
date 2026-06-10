@@ -44,34 +44,42 @@ def compute_level_changes(
     Returns:
         Dict mapping player_id to level delta (string that can be passed to step_level)
     """
-    # Determine base level change for dealer side
+    # Only the WINNING side advances from the score; the losing side is
+    # unchanged by the score (asymmetric). Red-five penalties are then applied
+    # on top, against the dealer side only.
+    #
+    #   farmer score   dealer_base   farmer_base
+    #   0              +3            0
+    #   5..55          +2            0
+    #   60..115        +1            0
+    #   120..175        0            0   (farmer win, dealer rotates)
+    #   180..235        0           +1
+    #   240..295        0           +2
+    #   300+            0           +3
     if farmer_score == 0:
-        base_change = 3  # Dealer +3
-    elif 5 <= farmer_score <= 55:
-        base_change = 2  # Dealer +2
-    elif 60 <= farmer_score <= 115:
-        base_change = 1  # Dealer +1
-    elif 120 <= farmer_score <= 175:
-        base_change = 0  # Neutral (farmer win)
-    elif 180 <= farmer_score <= 235:
-        base_change = -1  # Farmer +1
-    elif 240 <= farmer_score <= 295:
-        base_change = -2  # Farmer +2
+        dealer_base, farmer_base = 3, 0
+    elif farmer_score <= 55:
+        dealer_base, farmer_base = 2, 0
+    elif farmer_score <= 115:
+        dealer_base, farmer_base = 1, 0
+    elif farmer_score <= 175:
+        dealer_base, farmer_base = 0, 0
+    elif farmer_score <= 235:
+        dealer_base, farmer_base = 0, 1
+    elif farmer_score <= 295:
+        dealer_base, farmer_base = 0, 2
     else:  # 300+
-        base_change = -3  # Farmer +3
+        dealer_base, farmer_base = 0, 3
 
-    # Apply red five penalties (additional changes to dealer side)
-    red_five_penalty = -(hearts_fives_captured * 2 + diamonds_fives_captured * 1)
+    # Red-five penalties hit the dealer side only (♥5 = -2 each, ♦5 = -1 each).
+    red_five_penalty = hearts_fives_captured * 2 + diamonds_fives_captured * 1
+
+    dealer_change = dealer_base - red_five_penalty
+    farmer_change = farmer_base
 
     result = {}
-
-    # Dealer side: base_change + red_five_penalty (both positive means dealer loses)
-    dealer_change = base_change + red_five_penalty
     for player_id in dealer_side:
         result[player_id] = dealer_change
-
-    # Farmer side: inverse of base_change (no red five penalty for farmers on their own points)
-    farmer_change = -base_change
     for player_id in farmer_side:
         result[player_id] = farmer_change
 

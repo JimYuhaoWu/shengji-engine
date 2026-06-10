@@ -187,7 +187,11 @@ Priority order:
 1. If no valid trump was played: highest card of led suit wins
 2. If valid trump was played: compare trump plays as follows:
    - **For single trump cards:** highest trump rank wins
-   - **For multi-card trump throws:** ONLY the component with maximum card count is compared
+   - **For multi-card trump throws:** ONLY the **deciding component** is compared. The
+     deciding component is the one with the largest *group size* — **trio > pair > single** —
+     and, among equal group sizes, the longer/higher consecutive run. For plain combos this
+     is just "the component with the most cards"; the group-size priority only matters in the
+     mixed case below.
      - Example 1: Pair+2singles thrown. Both players trump with exact match (pair+2singles)
        - (Pair of Large Joker + Small Joker + Captain) vs (Pair of Small Joker + Large Joker + 5♥)
        - Only compare the PAIR: Large Joker pair > Small Joker pair
@@ -196,7 +200,19 @@ Priority order:
        - (Pair of 5♥ + Pair of Lieutenant) vs (Pair of Large Joker + Pair of Small Joker)
        - Only compare highest PAIR: 5♥ > Large Joker
        - Second pair and whether it's part of a tractor doesn't matter
+     - Example 3 (mixed): a throw containing both a **tractor-of-3** (3 consecutive pairs, 6
+       cards) and a **limo-of-2** (2 consecutive trios, 6 cards) is decided by the **limo**,
+       because a trio outranks a pair. The tractor portion is ignored.
+   - **Type must match to compare/win:** a play only contends if it is the *same combination
+     type* as the lead. In particular a **limo-of-2 matches only a limo-of-2**, never a
+     **tractor-of-3**, even though both are 6 cards.
    - **Invalid trump** (not exact match): treated as lower play, cannot win
+
+> **Implementation status:** `_determine_trick_winner` currently sizes the deciding component
+> by *card count* and requires a contender's largest component to be ≥ the led component's
+> size. This correctly blocks "two loose pairs beat a tractor" and "single beats a pair", but
+> does **not yet** distinguish equal-card-count combos of different type (limo-of-2 vs
+> tractor-of-3) or apply trio-over-pair priority in mixed throws. Tracked as remaining work.
 
 ## Trump Declaration (implement in trump.py)
 

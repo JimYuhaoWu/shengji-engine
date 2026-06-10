@@ -147,7 +147,11 @@ class TestLevelChangeScoring:
         )
 
     def test_red_five_penalizes_dealer(self):
-        """Farmer score 200 (+1 farmer) plus one ♥5 (−2 dealer) => dealer −3."""
+        """Farmer score 200 (farmer +1) plus one ♥5 (dealer -2) => dealer -2.
+
+        Asymmetric model: the losing dealer gets 0 from the score, so the only
+        dealer movement is the -2 red-five penalty.
+        """
         from shengji.card import Card
         from shengji.types import Suit, Rank
 
@@ -159,13 +163,13 @@ class TestLevelChangeScoring:
         game, state = self._state_with_trick(cards)
         new_levels = game._apply_level_changes(state)
 
-        # Dealer side moves DOWN 3 from R1:2 (−1 base for farmer +1, −2 for the ♥5)
-        assert new_levels[0] == "B3:2", f"dealer expected B3:2, got {new_levels[0]}"
-        # Farmer side moves UP 1 (base farmer win), red five does not mirror to farmers
+        # Dealer moves DOWN 2 from R1:2 (0 base + -2 for the ♥5)
+        assert new_levels[0] == "B2:2", f"dealer expected B2:2, got {new_levels[0]}"
+        # Farmer side moves UP 1
         assert new_levels[1] == "R1:4", f"farmer expected R1:4, got {new_levels[1]}"
 
     def test_no_red_five_baseline(self):
-        """Farmer score 200 with no red fives => dealer −1, farmer +1."""
+        """Farmer score 200 with no red fives => dealer unchanged, farmer +1."""
         from shengji.card import Card
         from shengji.types import Suit, Rank
 
@@ -174,7 +178,7 @@ class TestLevelChangeScoring:
         game, state = self._state_with_trick(cards)
         new_levels = game._apply_level_changes(state)
 
-        assert new_levels[0] == "B1:2", f"dealer expected B1:2, got {new_levels[0]}"
+        assert new_levels[0] == "R1:2", f"dealer expected R1:2, got {new_levels[0]}"
         assert new_levels[1] == "R1:4", f"farmer expected R1:4, got {new_levels[1]}"
 
 

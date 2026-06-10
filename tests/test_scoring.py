@@ -69,7 +69,7 @@ class TestComputeLevelChanges:
     """Test level change computation based on score."""
 
     def test_farmer_score_zero_dealer_wins_3(self):
-        """Score 0: dealer side +3 levels, farmers -3."""
+        """Score 0: dealer side +3 levels; farmers unchanged (asymmetric)."""
         dealer_side = (0, 1, 2)
         farmer_side = (3, 4, 5)
         changes = compute_level_changes(0, 0, 0, dealer_side, farmer_side)
@@ -77,12 +77,12 @@ class TestComputeLevelChanges:
         assert changes[0] == 3
         assert changes[1] == 3
         assert changes[2] == 3
-        assert changes[3] == -3
-        assert changes[4] == -3
-        assert changes[5] == -3
+        assert changes[3] == 0
+        assert changes[4] == 0
+        assert changes[5] == 0
 
     def test_farmer_score_30_dealer_wins_2(self):
-        """Score 30: dealer side +2 levels, farmers -2."""
+        """Score 30: dealer side +2 levels; farmers unchanged."""
         dealer_side = (0, 1, 2)
         farmer_side = (3, 4, 5)
         changes = compute_level_changes(30, 0, 0, dealer_side, farmer_side)
@@ -90,12 +90,12 @@ class TestComputeLevelChanges:
         assert changes[0] == 2
         assert changes[1] == 2
         assert changes[2] == 2
-        assert changes[3] == -2
-        assert changes[4] == -2
-        assert changes[5] == -2
+        assert changes[3] == 0
+        assert changes[4] == 0
+        assert changes[5] == 0
 
     def test_farmer_score_60_dealer_wins_1(self):
-        """Score 60: dealer side +1 level, farmers -1."""
+        """Score 60: dealer side +1 level; farmers unchanged."""
         dealer_side = (0, 1, 2)
         farmer_side = (3, 4, 5)
         changes = compute_level_changes(60, 0, 0, dealer_side, farmer_side)
@@ -103,12 +103,12 @@ class TestComputeLevelChanges:
         assert changes[0] == 1
         assert changes[1] == 1
         assert changes[2] == 1
-        assert changes[3] == -1
-        assert changes[4] == -1
-        assert changes[5] == -1
+        assert changes[3] == 0
+        assert changes[4] == 0
+        assert changes[5] == 0
 
     def test_farmer_score_150_neutral(self):
-        """Score 120-175: neutral (farmer win, no change)."""
+        """Score 120-175: neutral (farmer win, no level change)."""
         dealer_side = (0, 1, 2)
         farmer_side = (3, 4, 5)
         changes = compute_level_changes(150, 0, 0, dealer_side, farmer_side)
@@ -117,91 +117,91 @@ class TestComputeLevelChanges:
             assert changes[player_id] == 0
 
     def test_farmer_score_200_farmer_wins_1(self):
-        """Score 200: farmer side +1 level."""
+        """Score 200: farmer side +1 level; dealer unchanged."""
         dealer_side = (0, 1, 2)
         farmer_side = (3, 4, 5)
         changes = compute_level_changes(200, 0, 0, dealer_side, farmer_side)
 
-        assert changes[0] == -1
-        assert changes[1] == -1
-        assert changes[2] == -1
+        assert changes[0] == 0
+        assert changes[1] == 0
+        assert changes[2] == 0
         assert changes[3] == 1
         assert changes[4] == 1
         assert changes[5] == 1
 
     def test_farmer_score_250_farmer_wins_2(self):
-        """Score 250: farmer side +2 levels."""
+        """Score 250: farmer side +2 levels; dealer unchanged."""
         dealer_side = (0, 1, 2)
         farmer_side = (3, 4, 5)
         changes = compute_level_changes(250, 0, 0, dealer_side, farmer_side)
 
-        assert changes[0] == -2
-        assert changes[1] == -2
-        assert changes[2] == -2
+        assert changes[0] == 0
+        assert changes[1] == 0
+        assert changes[2] == 0
         assert changes[3] == 2
         assert changes[4] == 2
         assert changes[5] == 2
 
     def test_farmer_score_300_farmer_wins_3(self):
-        """Score 300+: farmer side +3 levels."""
+        """Score 300+: farmer side +3 levels; dealer unchanged."""
         dealer_side = (0, 1, 2)
         farmer_side = (3, 4, 5)
         changes = compute_level_changes(300, 0, 0, dealer_side, farmer_side)
 
-        assert changes[0] == -3
-        assert changes[1] == -3
-        assert changes[2] == -3
+        assert changes[0] == 0
+        assert changes[1] == 0
+        assert changes[2] == 0
         assert changes[3] == 3
         assert changes[4] == 3
         assert changes[5] == 3
 
+    def test_farmer_win_with_red_five(self):
+        """Score 200 + one ♥5: farmer +1, dealer -2 (0 base, -2 red five)."""
+        dealer_side = (0,)
+        farmer_side = (1, 2, 3, 4, 5)
+        changes = compute_level_changes(200, 1, 0, dealer_side, farmer_side)
+
+        assert changes[0] == -2  # dealer: 0 base - 2 (one ♥5)
+        assert changes[1] == 1   # farmer: +1, no red-five mirror
+
     def test_red_five_penalties_hearts_only(self):
-        """Hearts 5 captured: dealer -2 per card."""
+        """Score 30 (dealer +2) with 2 ♥5 (-4): dealer -2; farmers unchanged."""
         dealer_side = (0, 1, 2)
         farmer_side = (3, 4, 5)
-        # Base: score 30 = dealer +2, but 2 ♥5 = dealer -4 additional
         changes = compute_level_changes(30, 2, 0, dealer_side, farmer_side)
 
-        # Base change: +2, additional: -4, total: -2
-        # Farmer side gets inverse of base change: -2
-        assert changes[0] == -2
+        assert changes[0] == -2  # +2 base - 4
         assert changes[1] == -2
         assert changes[2] == -2
-        assert changes[3] == -2
-        assert changes[4] == -2
-        assert changes[5] == -2
+        assert changes[3] == 0
+        assert changes[4] == 0
+        assert changes[5] == 0
 
     def test_red_five_penalties_diamonds_only(self):
-        """Diamonds 5 captured: dealer -1 per card."""
+        """Score 30 (dealer +2) with 3 ♦5 (-3): dealer -1; farmers unchanged."""
         dealer_side = (0, 1, 2)
         farmer_side = (3, 4, 5)
-        # Base: score 30 = dealer +2, but 3 ♦5 = dealer -3 additional
         changes = compute_level_changes(30, 0, 3, dealer_side, farmer_side)
 
-        # Base change: +2, additional: -3, total: -1
-        # Farmer side gets inverse of base change: -2
-        assert changes[0] == -1
+        assert changes[0] == -1  # +2 base - 3
         assert changes[1] == -1
         assert changes[2] == -1
-        assert changes[3] == -2
-        assert changes[4] == -2
-        assert changes[5] == -2
+        assert changes[3] == 0
+        assert changes[4] == 0
+        assert changes[5] == 0
 
     def test_red_five_penalties_combined(self):
-        """Both ♥5 and ♦5 captured."""
+        """Score 30 (dealer +2) with 1 ♥5 + 2 ♦5 (-4): dealer -2; farmers unchanged."""
         dealer_side = (0, 1, 2)
         farmer_side = (3, 4, 5)
-        # Base: score 30 = dealer +2, but 1 ♥5 + 2 ♦5 = dealer -4 additional
         changes = compute_level_changes(30, 1, 2, dealer_side, farmer_side)
 
-        # Base change: +2, additional: -(2 + 2) = -4, total: -2
-        # Farmer side gets inverse of base change: -2
-        assert changes[0] == -2
+        assert changes[0] == -2  # +2 base - (2 + 2)
         assert changes[1] == -2
         assert changes[2] == -2
-        assert changes[3] == -2
-        assert changes[4] == -2
-        assert changes[5] == -2
+        assert changes[3] == 0
+        assert changes[4] == 0
+        assert changes[5] == 0
 
 
 class TestApplyLevelChanges:

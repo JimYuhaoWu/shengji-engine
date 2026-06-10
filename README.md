@@ -105,21 +105,25 @@ A Python library implementing the complete game logic for 拖拉机 as played by
 - You may **trump** with cards that EXACTLY match the led combination type
 - Or play any cards without trumping (lower play)
 
-**Trump exact match rule:** Trump must be EXACTLY the same combination type:
+**Trump exact match rule:** Trump must be EXACTLY the same combination **type**, not merely the same card count:
 - ❌ Two non-sequential pairs cannot trump a tractor
 - ❌ Pair+2singles cannot trump two pairs
 - ✅ Tractor can trump tractor
 - ✅ Pair+2singles can trump pair+2singles (different card ranks, same structure)
+- ❌ A **limo (2 consecutive trios, 6 cards)** does **not** match a **tractor of 3 (3 consecutive pairs, 6 cards)** — same card count, different type, so they never compare against each other.
 
 **Trick winner:** Highest card of led suit wins, UNLESS valid trump was played. When comparing multiple trump plays:
 - **For single cards:** highest trump rank wins
-- **For multi-card throws:** ONLY the component with maximum card count is compared
+- **For multi-card throws:** ONLY the **deciding component** is compared. The deciding component is the one whose *group size* is largest — a **trio beats a pair beats a single** — and, among equal group sizes, the longer/higher consecutive run. (For plain combos this equals "the component with the most cards"; the group-size rule only matters for the mixed cases below.)
   - Example: (Pair of Large Joker + Small Joker + Captain) vs (Pair of Small Joker + Large Joker + 5♥) when pair+2singles led
     - Only compare the PAIRS: Large Joker pair wins
     - Singles (Small Joker, Captain, 5♥) are completely ignored
   - Another example: (Pair of 5♥ + Pair of Lieutenant) vs (Pair of Large Joker + Pair of Small Joker) when two pairs led
     - Only compare highest PAIR: 5♥ > Large Joker
     - Second pair (and whether it's a tractor) doesn't matter
+  - Mixed-combo example: a multi-throw that contains **both a tractor-of-3 (pairs) and a limo-of-2 (trios)** — both 6 cards — is decided by the **limo**, because a trio outranks a pair. The tractor portion is ignored for comparison.
+
+> **Implementation status:** the engine currently decides the deciding component by *card count* and requires a contender's largest component to be at least the led component's size. This correctly blocks "two loose pairs beat a tractor" and "single beats a pair", but it does **not yet** distinguish equal-card-count combos of different type (limo-of-2 vs tractor-of-3) or apply the trio-over-pair priority in mixed throws. Those exotic cases are tracked as remaining work.
 
 **Kitty scoring**: Scores in kitty belong to the winner of the last trick, multiplied by 2× the number of cards in the winning combination
 
