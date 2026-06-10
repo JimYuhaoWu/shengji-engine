@@ -310,3 +310,41 @@ class TestTrickWinner:
             (5, (Card(D, Rank.SEVEN, 0), Card(D, Rank.EIGHT, 0), Card(D, Rank.NINE, 0), Card(D, Rank.TEN, 0))),
         )
         assert self._winner(trick) == 0  # leader keeps it
+
+    def test_deciding_signature_priority(self):
+        """Deciding component: trio > pair; longer run wins within a group size."""
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        game = Game(num_players=6)
+        H, S = Suit.HEARTS, Suit.SPADES
+        sig = lambda cards: game._deciding_signature(cards, H, "Q")
+
+        assert sig((Card(S, Rank.ACE, 0),)) == (1, 1)
+        assert sig((Card(S, Rank.KING, 0), Card(S, Rank.KING, 1))) == (2, 1)
+        assert sig((Card(S, Rank.KING, 0), Card(S, Rank.KING, 1), Card(S, Rank.KING, 2))) == (3, 1)
+        tractor3 = (Card(S, Rank.SEVEN, 0), Card(S, Rank.SEVEN, 1), Card(S, Rank.EIGHT, 0),
+                    Card(S, Rank.EIGHT, 1), Card(S, Rank.NINE, 0), Card(S, Rank.NINE, 1))
+        assert sig(tractor3) == (2, 3)
+        limo2 = (Card(S, Rank.SEVEN, 0), Card(S, Rank.SEVEN, 1), Card(S, Rank.SEVEN, 2),
+                 Card(S, Rank.EIGHT, 0), Card(S, Rank.EIGHT, 1), Card(S, Rank.EIGHT, 2))
+        assert sig(limo2) == (3, 2)
+        # Mixed throw with both a tractor-3 and a limo-2 is decided by the limo (trio).
+        assert sig(tractor3 + limo2) == (3, 2)
+
+    def test_limo2_not_beaten_by_tractor3(self):
+        """A led limo-of-2 cannot be beaten by a (higher) tractor-of-3: different
+        type, even though both are 6 cards."""
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        H, C = Suit.HEARTS, Suit.CLUBS
+        led_limo = (Card(H, Rank.SEVEN, 0), Card(H, Rank.SEVEN, 1), Card(H, Rank.SEVEN, 2),
+                    Card(H, Rank.EIGHT, 0), Card(H, Rank.EIGHT, 1), Card(H, Rank.EIGHT, 2))
+        # Higher trump tractor-3 (9-10-J hearts pairs) — must NOT match the limo.
+        trump_tractor3 = (Card(H, Rank.NINE, 0), Card(H, Rank.NINE, 1), Card(H, Rank.TEN, 0),
+                          Card(H, Rank.TEN, 1), Card(H, Rank.JACK, 0), Card(H, Rank.JACK, 1))
+        fill = tuple(Card(C, r, 0) for r in list(Rank)[:6])
+        trick = (
+            (0, led_limo), (1, trump_tractor3),
+            (2, fill), (3, fill), (4, fill), (5, fill),
+        )
+        assert self._winner(trick) == 0  # leader keeps it (tractor-3 can't match limo-2)

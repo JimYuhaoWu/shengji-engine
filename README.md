@@ -123,7 +123,7 @@ A Python library implementing the complete game logic for 拖拉机 as played by
     - Second pair (and whether it's a tractor) doesn't matter
   - Mixed-combo example: a multi-throw that contains **both a tractor-of-3 (pairs) and a limo-of-2 (trios)** — both 6 cards — is decided by the **limo**, because a trio outranks a pair. The tractor portion is ignored for comparison.
 
-> **Implementation status:** the engine currently decides the deciding component by *card count* and requires a contender's largest component to be at least the led component's size. This correctly blocks "two loose pairs beat a tractor" and "single beats a pair", but it does **not yet** distinguish equal-card-count combos of different type (limo-of-2 vs tractor-of-3) or apply the trio-over-pair priority in mixed throws. Those exotic cases are tracked as remaining work.
+The engine implements this via a `(group_size, run_length)` signature for the deciding component: a contender must hold a component of the **same** signature to win (so a limo-of-2 `(3,2)` never matches a tractor-of-3 `(2,3)`, and two loose pairs `(2,1)` cannot beat a tractor `(2,2)`).
 
 **Kitty scoring**: Scores in kitty belong to the winner of the last trick, multiplied by 2× the number of cards in the winning combination
 

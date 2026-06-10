@@ -208,11 +208,12 @@ Priority order:
      **tractor-of-3**, even though both are 6 cards.
    - **Invalid trump** (not exact match): treated as lower play, cannot win
 
-> **Implementation status:** `_determine_trick_winner` currently sizes the deciding component
-> by *card count* and requires a contender's largest component to be ≥ the led component's
-> size. This correctly blocks "two loose pairs beat a tractor" and "single beats a pair", but
-> does **not yet** distinguish equal-card-count combos of different type (limo-of-2 vs
-> tractor-of-3) or apply trio-over-pair priority in mixed throws. Tracked as remaining work.
+`_determine_trick_winner` implements this with a `(group_size, run_length)` signature for the
+deciding component (single=(1,1), pair=(2,1), trio=(3,1), tractor-k=(2,k), limo-k=(3,k)).
+Group size has priority (trio > pair > single); among equal group sizes the longer run wins.
+A contender must hold a component of the **same** signature to win, so a limo-of-2 `(3,2)`
+never matches a tractor-of-3 `(2,3)`, and two loose pairs `(2,1)` cannot beat a tractor
+`(2,2)`. (Consecutive runs are detected per suit, matching the rest of the engine.)
 
 ## Trump Declaration (implement in trump.py)
 

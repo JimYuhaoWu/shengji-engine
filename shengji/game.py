@@ -691,14 +691,18 @@ class Game:
         """Determine which player won the trick (index in trick tuple).
 
         Rules:
-        - The leader sets the combination structure; its largest component size
-          (single=1, pair=2, trio=3, tractor/limo=length) is what others must match.
-        - A play can only win if it contributes a component of at least that size
-          in the contention group (so two loose pairs cannot beat a tractor).
-        - Trump beats non-trump; among trump or among led-suit cards, ordering is
-          decided by trump.compare_cards on the representative (top card of the
-          player's largest matching component). Lower components (e.g. the singles
-          in a pair+2-singles throw) are ignored.
+        - The leader sets the structure. Its *deciding component* is the one with
+          the largest group size (trio > pair > single) and, among equal group
+          sizes, the longest consecutive run. That gives a signature
+          ``(group_size, run_length)`` (single=(1,1), pair=(2,1), trio=(3,1),
+          tractor-k=(2,k), limo-k=(3,k)).
+        - A play can only win if its contention group contains a component of the
+          SAME signature. So a limo-of-2 (3,2) does not match a tractor-of-3
+          (2,3) even though both are 6 cards, and two loose pairs (2,1) cannot
+          beat a tractor (2,2).
+        - Trump beats non-trump; among contenders, trump.compare_cards ranks the
+          representative (strongest card of the matching component). Lower
+          components (e.g. the singles in a pair+2-singles throw) are ignored.
         - Ties keep the earliest-played player.
         """
         if not trick:
@@ -710,18 +714,18 @@ class Game:
         led_cards = trick[0][1]
         led_suit = led_cards[0].suit
         led_is_trump = is_trump(led_cards[0], trump_suit, trump_level)
-        led_size = self._max_component_count(led_cards, trump_suit, trump_level)
+        led_gs, led_run = self._deciding_signature(led_cards, trump_suit, trump_level)
 
         # The leader is always a valid contender and the initial best.
         best_idx = 0
         best_rep = self._winning_representative(
-            led_cards, led_suit, led_is_trump, led_size, trump_suit, trump_level
+            led_cards, led_suit, led_is_trump, led_gs, led_run, trump_suit, trump_level
         )
 
         for idx in range(1, len(trick)):
             cards = trick[idx][1]
             rep = self._winning_representative(
-                cards, led_suit, led_is_trump, led_size, trump_suit, trump_level
+                cards, led_suit, led_is_trump, led_gs, led_run, trump_suit, trump_level
             )
             if rep is None:
                 continue  # cannot match the led structure -> cannot win
@@ -731,26 +735,78 @@ class Game:
 
         return best_idx
 
+    def _max_run_at_group_size(
+        self, cards, group_size: int, trump_suit: Suit, trump_level: str
+    ) -> int:
+        """Longest consecutive run of ranks that each have >= ``group_size`` copies.
+
+        Returns 0 if no rank reaches ``group_size``. Consecutiveness is evaluated
+        per suit using that suit's rank ordering (so a tractor/limo must be one
+        suit, matching the rest of the engine's combo detection).
+        """
+        from collections import Counter
+        from .rules import get_rank_order_for_suit
+
+        best_run = 0
+        for suit in {c.suit for c in cards}:
+            counts = Counter(c.rank for c in cards if c.suit == suit)
+            rank_order = get_rank_order_for_suit(suit, trump_suit, trump_level)
+            qualifying = sorted(
+                (r for r, n in counts.items() if n >= group_size),
+                key=lambda r: rank_order.index(r) if r in rank_order else 999,
+            )
+            i = 0
+            while i < len(qualifying):
+                j = i + 1
+                while (
+                    j < len(qualifying)
+                    and qualifying[j] in rank_order
+                    and qualifying[j - 1] in rank_order
+                    and rank_order.index(qualifying[j]) == rank_order.index(qualifying[j - 1]) + 1
+                ):
+                    j += 1
+                best_run = max(best_run, j - i)
+                i = j
+        return best_run
+
+    def _deciding_signature(
+        self, cards, trump_suit: Suit, trump_level: str
+    ) -> Tuple[int, int]:
+        """Signature (group_size, run_length) of a play's deciding component.
+
+        Group size has priority (trio beats pair beats single); among equal group
+        sizes the longer run wins. Every non-empty play has at least (1, 1).
+        """
+        best = (1, 1)
+        for gs in (3, 2):
+            run = self._max_run_at_group_size(cards, gs, trump_suit, trump_level)
+            if run >= 1 and (gs, run) > best:
+                best = (gs, run)
+        return best
+
     def _winning_representative(
         self,
         cards: Tuple[Card, ...],
         led_suit: Suit,
         led_is_trump: bool,
-        led_size: int,
+        led_gs: int,
+        led_run: int,
         trump_suit: Suit,
         trump_level: str,
     ) -> Optional[Card]:
         """Representative card used to rank a play, or None if it cannot win.
 
-        The representative is the strongest card belonging to a maximum-size
-        component of the player's *contention group* (the cards eligible to win):
+        The contention group is the cards eligible to win:
         - if the lead is trump, only trump cards contend;
         - else if the player has led-suit (non-trump) cards, those contend (they
-          followed suit and cannot trump);
+          followed suit and cannot ruff);
         - else the player's trump cards contend (a ruff).
-        A play only contends if its largest component is at least ``led_size``.
+        A play only contends if its contention group contains a component whose
+        signature matches the led ``(led_gs, led_run)`` exactly. The representative
+        is then the strongest card among that group's cards of size >= led_gs.
         """
-        # Build the contention group.
+        from collections import Counter
+
         if led_is_trump:
             group = [c for c in cards if is_trump(c, trump_suit, trump_level)]
         else:
@@ -758,62 +814,30 @@ class Game:
                 c for c in cards
                 if c.suit == led_suit and not is_trump(c, trump_suit, trump_level)
             ]
-            if led_group:
-                group = led_group
-            else:
-                group = [c for c in cards if is_trump(c, trump_suit, trump_level)]
+            group = led_group if led_group else [c for c in cards if is_trump(c, trump_suit, trump_level)]
 
         if not group:
             return None
 
-        comp_size = self._max_component_count(tuple(group), trump_suit, trump_level)
-        if comp_size < led_size:
-            return None  # structure too small to beat the lead
-
-        # Representative = strongest card among the largest components.
-        rep_cards = self._max_component_cards(tuple(group), comp_size, trump_suit, trump_level)
-        if not rep_cards:
+        # Must contain a component matching the led signature exactly.
+        if self._max_run_at_group_size(group, led_gs, trump_suit, trump_level) < led_run:
             return None
 
-        best = rep_cards[0]
-        for c in rep_cards[1:]:
+        # Representative = strongest card among cards in groups of size >= led_gs
+        # (for singles, the whole group qualifies). Lower components are ignored.
+        counts = Counter((c.rank, c.suit) for c in group)
+        if led_gs == 1:
+            qualifying = list(group)
+        else:
+            qualifying = [c for c in group if counts[(c.rank, c.suit)] >= led_gs]
+        if not qualifying:
+            return None
+
+        best = qualifying[0]
+        for c in qualifying[1:]:
             if compare_cards(c, best, led_suit, trump_suit, trump_level) > 0:
                 best = c
         return best
-
-    def _max_component_cards(
-        self, group: Tuple[Card, ...], comp_size: int, trump_suit: Suit, trump_level: str
-    ) -> List[Card]:
-        """Cards that belong to a component of size ``comp_size`` within ``group``.
-
-        Covers identical groups (pairs/trios) and consecutive combos
-        (tractors/limos). Used to pick the ranking representative.
-        """
-        from collections import Counter
-
-        result: List[Card] = []
-
-        # Identical groups (pairs / trios) of exactly comp_size.
-        counts = Counter((c.rank, c.suit) for c in group)
-        for (rank, suit), n in counts.items():
-            if n == comp_size:
-                result.extend(c for c in group if c.rank == rank and c.suit == suit)
-
-        # Consecutive combos (tractors / limos) whose length is comp_size.
-        for suit in {c.suit for c in group}:
-            same_suit = [c for c in group if c.suit == suit]
-            for tractor in self._find_tractors_in_suit(same_suit, trump_suit, trump_level):
-                if len(tractor) == comp_size:
-                    result.extend(tractor)
-            for limo in self._find_limos_in_suit(same_suit, trump_suit, trump_level):
-                if len(limo) == comp_size:
-                    result.extend(limo)
-
-        # Fallback: if comp_size==1 (singles) nothing matched above, use the group.
-        if not result and comp_size == 1:
-            result = list(group)
-
-        return result
 
     def _max_component_count(self, cards: Tuple[Card, ...], trump_suit: Suit, trump_level: str) -> int:
         """Largest structural component (in cards) of a played combination.
