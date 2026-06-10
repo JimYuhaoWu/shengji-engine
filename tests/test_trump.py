@@ -103,6 +103,18 @@ class TestIsTrump:
         assert not is_trump(Card(Suit.CLUBS, Rank.ACE, 0), Suit.HEARTS, "7")
         assert not is_trump(Card(Suit.SPADES, Rank.KING, 0), Suit.DIAMONDS, "10")
 
+    def test_plain_trump_suit_card_is_trump(self):
+        """Every plain card of the trump suit is trump (regression).
+
+        Previously is_trump only recognized special trumps + level cards and
+        wrongly returned False for e.g. 6♥ when hearts is trump.
+        """
+        assert is_trump(Card(Suit.HEARTS, Rank.SIX, 0), Suit.HEARTS, "2")
+        assert is_trump(Card(Suit.HEARTS, Rank.ACE, 0), Suit.HEARTS, "7")
+        # 5 of a black trump suit is a plain trump (only 5♥/5♦ are always-trump)
+        assert is_trump(Card(Suit.SPADES, Rank.FIVE, 0), Suit.SPADES, "7")
+        assert is_trump(Card(Suit.CLUBS, Rank.SEVEN, 0), Suit.CLUBS, "2")
+
 
 class TestTrumpRank:
     """Test trump card ranking (higher number = stronger)."""
@@ -146,6 +158,17 @@ class TestTrumpRank:
     def test_non_trump_card_returns_none(self):
         """Non-trump cards should return None."""
         assert trump_rank(Card(Suit.CLUBS, Rank.ACE, 0), Suit.HEARTS, "7") is None
+
+    def test_five_of_black_trump_suit_is_ranked(self):
+        """5 of a black trump suit is a plain trump and must rank (regression).
+
+        It sits between the 6 and 4 of the trump suit, below all special trumps.
+        """
+        rank_5s = trump_rank(Card(Suit.SPADES, Rank.FIVE, 0), Suit.SPADES, "7")
+        rank_6s = trump_rank(Card(Suit.SPADES, Rank.SIX, 0), Suit.SPADES, "7")
+        rank_4s = trump_rank(Card(Suit.SPADES, Rank.FOUR, 0), Suit.SPADES, "7")
+        assert rank_5s is not None
+        assert rank_6s > rank_5s > rank_4s
 
 
 class TestNonTrumpRank:

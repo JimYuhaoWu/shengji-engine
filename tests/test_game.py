@@ -233,3 +233,76 @@ class TestKittyMultiplier:
             kitty_multiplier=4, tricks_won=((0, pair + buried),),
         )
         assert game._calculate_farmer_score(state) == 0
+
+
+class TestTrickWinner:
+    """Trick-winner resolution: trump beats non-trump, higher beats lower, and
+    only the max-count component is compared. Uses level 'Q' so the small test
+    ranks (2,3,...) are not themselves level-card trumps."""
+
+    def _winner(self, trick):
+        from shengji.types import Suit
+        game = Game(num_players=6)
+        state = game.reset().copy(trump_suit=Suit.HEARTS, trump_level="Q")
+        return trick[game._determine_trick_winner(trick, state)][0]
+
+    def test_trump_beats_non_trump(self):
+        """A low trump ruff beats a high non-trump card of the led suit."""
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        H, S = Suit.HEARTS, Suit.SPADES
+        trick = (
+            (0, (Card(S, Rank.ACE, 0),)),   # led suit (spades), highest non-trump
+            (1, (Card(H, Rank.SIX, 0),)),   # ruff with a low trump
+            (2, (Card(S, Rank.TWO, 0),)),
+            (3, (Card(S, Rank.THREE, 0),)),
+            (4, (Card(S, Rank.FOUR, 0),)),
+            (5, (Card(S, Rank.SEVEN, 0),)),
+        )
+        assert self._winner(trick) == 1
+
+    def test_highest_led_suit_when_no_trump(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        S = Suit.SPADES
+        trick = (
+            (0, (Card(S, Rank.SEVEN, 0),)),
+            (1, (Card(S, Rank.ACE, 0),)),
+            (2, (Card(S, Rank.TWO, 0),)),
+            (3, (Card(S, Rank.THREE, 0),)),
+            (4, (Card(S, Rank.FOUR, 0),)),
+            (5, (Card(S, Rank.SIX, 0),)),
+        )
+        assert self._winner(trick) == 1
+
+    def test_pair_plus_singles_compares_only_pair(self):
+        """pair+2singles led; a trump pair+2singles ruff wins on the PAIR."""
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        H, S, C, D = Suit.HEARTS, Suit.SPADES, Suit.CLUBS, Suit.DIAMONDS
+        lead = (Card(S, Rank.NINE, 0), Card(S, Rank.NINE, 1), Card(S, Rank.ACE, 0), Card(S, Rank.KING, 0))
+        ruff = (Card(H, Rank.SEVEN, 0), Card(H, Rank.SEVEN, 1), Card(H, Rank.ACE, 0), Card(H, Rank.KING, 0))
+        trick = (
+            (0, lead), (1, ruff),
+            (2, (Card(C, Rank.TWO, 0), Card(C, Rank.THREE, 0), Card(C, Rank.FOUR, 0), Card(C, Rank.SIX, 0))),
+            (3, (Card(C, Rank.SEVEN, 0), Card(C, Rank.EIGHT, 0), Card(C, Rank.NINE, 0), Card(C, Rank.TEN, 0))),
+            (4, (Card(D, Rank.TWO, 0), Card(D, Rank.THREE, 0), Card(D, Rank.FOUR, 0), Card(D, Rank.SIX, 0))),
+            (5, (Card(D, Rank.SEVEN, 0), Card(D, Rank.EIGHT, 0), Card(D, Rank.NINE, 0), Card(D, Rank.TEN, 0))),
+        )
+        assert self._winner(trick) == 1
+
+    def test_tractor_not_beaten_by_two_loose_pairs(self):
+        """A led tractor cannot be beaten by two non-consecutive trump pairs."""
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        H, S, C, D = Suit.HEARTS, Suit.SPADES, Suit.CLUBS, Suit.DIAMONDS
+        lead = (Card(S, Rank.SEVEN, 0), Card(S, Rank.SEVEN, 1), Card(S, Rank.EIGHT, 0), Card(S, Rank.EIGHT, 1))
+        loose = (Card(H, Rank.KING, 0), Card(H, Rank.KING, 1), Card(H, Rank.NINE, 0), Card(H, Rank.NINE, 1))
+        trick = (
+            (0, lead), (1, loose),
+            (2, (Card(C, Rank.TWO, 0), Card(C, Rank.THREE, 0), Card(C, Rank.FOUR, 0), Card(C, Rank.SIX, 0))),
+            (3, (Card(C, Rank.SEVEN, 0), Card(C, Rank.EIGHT, 0), Card(C, Rank.NINE, 0), Card(C, Rank.TEN, 0))),
+            (4, (Card(D, Rank.TWO, 0), Card(D, Rank.THREE, 0), Card(D, Rank.FOUR, 0), Card(D, Rank.SIX, 0))),
+            (5, (Card(D, Rank.SEVEN, 0), Card(D, Rank.EIGHT, 0), Card(D, Rank.NINE, 0), Card(D, Rank.TEN, 0))),
+        )
+        assert self._winner(trick) == 0  # leader keeps it

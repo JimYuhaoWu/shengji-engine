@@ -65,7 +65,11 @@ def is_lieutenant(card: Card, trump_suit: Suit) -> bool:
 
 
 def is_trump(card: Card, trump_suit: Suit, trump_level: str) -> bool:
-    """Check if card is a trump card."""
+    """Check if card is a trump card.
+
+    Trump cards are: the always-trumps (5♥/5♦), both Jokers, the Captain and
+    Lieutenant, every level card, and every plain card of the trump suit.
+    """
     if is_always_trump(card):
         return True
     if is_joker(card):
@@ -75,6 +79,9 @@ def is_trump(card: Card, trump_suit: Suit, trump_level: str) -> bool:
     if is_lieutenant(card, trump_suit):
         return True
     if is_level_card(card, trump_level):
+        return True
+    # Every plain card of the trump suit is also trump.
+    if trump_suit is not None and card.suit == trump_suit:
         return True
     return False
 
@@ -120,15 +127,18 @@ def trump_rank(card: Card, trump_suit: Suit, trump_level: str) -> Optional[int]:
         else:
             return 993   # Trump level card in non-trump suit
 
-    # Regular trump suit cards (A, K, Q, J, T, 9, 8, 7, 6, 4, 2)
+    # Regular trump suit cards (A, K, Q, J, T, 9, 8, 7, 6, 5, 4, 2).
+    # Note: 5♥/5♦ are always-trump (handled above); the 5 of a *black* trump
+    # suit (5♠/5♣) is a plain trump and must be ranked here. The 3 of the trump
+    # suit is the Captain (handled above), so THREE never reaches this list.
     if card.suit == trump_suit:
         trump_rank_order = [
             Rank.ACE, Rank.KING, Rank.QUEEN, Rank.JACK, Rank.TEN,
-            Rank.NINE, Rank.EIGHT, Rank.SEVEN, Rank.SIX, Rank.FOUR, Rank.TWO
+            Rank.NINE, Rank.EIGHT, Rank.SEVEN, Rank.SIX, Rank.FIVE, Rank.FOUR, Rank.TWO
         ]
         try:
             idx = trump_rank_order.index(card.rank)
-            return 900 - idx  # 900 to 890
+            return 900 - idx  # 900 down to 888
         except ValueError:
             return None
 
