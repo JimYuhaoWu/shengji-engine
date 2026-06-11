@@ -434,3 +434,204 @@ class TestCallHelperFiltering:
         called = {(a.cards[0].rank, a.cards[0].suit) for a in actions}
         assert (Rank.KING, C) not in called          # all 3 held -> not callable
         assert (Rank.QUEEN, C) in called              # not fully held -> callable
+
+
+class TestFollowingTrumpLead:
+    """Trump is ONE logical suit when following: a trump lead (Joker, level
+    card, or trump-suit card) obliges any trump in hand, and a non-trump lead
+    obliges only non-trump cards of that physical suit."""
+
+    def _game_state(self, follower_hand, led_card):
+        from shengji.types import Suit
+        game = Game(num_players=6)
+        base = game.reset()
+        hands = list(base.hands)
+        hands[1] = tuple(follower_hand)
+        state = base.copy(
+            phase=GamePhase.TRICK_PLAYING,
+            current_player=1,
+            trump_suit=Suit.HEARTS,
+            trump_level="2",
+            hands=tuple(hands),
+            current_trick=((0, (led_card,)),),
+        )
+        return game, state
+
+    def _playable_singles(self, game, state):
+        actions = game._get_legal_actions_trick_playing(state)
+        return {(a.cards[0].suit, a.cards[0].rank) for a in actions if len(a.cards) == 1}
+
+    def test_joker_lead_allows_any_trump(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        H, S, C, J = Suit.HEARTS, Suit.SPADES, Suit.CLUBS, Suit.JOKER
+        hand = [
+            Card(J, Rank.SMALL_JOKER, 0),  # joker
+            Card(H, Rank.NINE, 0),         # trump suit
+            Card(C, Rank.TWO, 0),          # off-suit level card (trump)
+            Card(S, Rank.KING, 0),         # plain non-trump
+        ]
+        game, state = self._game_state(hand, Card(J, Rank.LARGE_JOKER, 0))
+        playable = self._playable_singles(game, state)
+        assert (J, Rank.SMALL_JOKER) in playable
+        assert (H, Rank.NINE) in playable
+        assert (C, Rank.TWO) in playable
+        assert (S, Rank.KING) not in playable  # holding trump, must follow trump
+
+    def test_offsuit_level_card_lead_is_a_trump_lead(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        H, S = Suit.HEARTS, Suit.SPADES
+        hand = [Card(S, Rank.KING, 0), Card(H, Rank.NINE, 0)]
+        game, state = self._game_state(hand, Card(S, Rank.TWO, 0))  # 2♠ is trump
+        playable = self._playable_singles(game, state)
+        assert (H, Rank.NINE) in playable
+        assert (S, Rank.KING) not in playable  # spades are NOT the led suit here
+
+    def test_nontrump_lead_excludes_level_card_of_that_suit(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank
+        S = Suit.SPADES
+        hand = [Card(S, Rank.KING, 0), Card(S, Rank.TWO, 0)]  # 2♠ is trump
+        game, state = self._game_state(hand, Card(S, Rank.NINE, 0))
+        playable = self._playable_singles(game, state)
+        assert (S, Rank.KING) in playable
+        assert (S, Rank.TWO) not in playable  # trump can't masquerade as a spade
+
+
+class TestNextTrickLeaderGetsLeadingActions:
+    """After a trick completes, the winner leading the next trick must get full
+    LEADING actions (any combo), not follow-plays restricted to the previous
+    trick's led suit. Regression for the stale current_trick leak."""
+
+    def test_new_leader_can_lead_any_suit_after_trump_led_trick(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank, GamePhase
+        H, S, C, D, JK = Suit.HEARTS, Suit.SPADES, Suit.CLUBS, Suit.DIAMONDS, Suit.JOKER
+        game = Game(num_players=6)
+        base = game.reset()
+        # A trump (spades) single has been led; 5 players have followed. Player 5
+        # plays the Large Joker (highest trump), wins, and leads the next trick.
+        hands = list(base.hands)
+        hands[5] = (Card(JK, Rank.LARGE_JOKER, 0), Card(H, Rank.KING, 0), Card(D, Rank.QUEEN, 0), Card(C, Rank.TEN, 0))
+        trick = (
+            (0, (Card(S, Rank.TEN, 0),)),   # trump led
+            (1, (Card(S, Rank.SEVEN, 0),)),
+            (2, (Card(S, Rank.SIX, 0),)),
+            (3, (Card(S, Rank.FOUR, 0),)),
+            (4, (Card(S, Rank.NINE, 1),)),
+        )
+        state = base.copy(
+            phase=GamePhase.TRICK_PLAYING, current_player=5,
+            trump_suit=S, trump_level="2", hands=tuple(hands), current_trick=trick,
+        )
+        new_state = game._handle_play_cards(
+            state, _play(Card(JK, Rank.LARGE_JOKER, 0)),
+        )
+        assert new_state.current_trick == ()                  # fresh trick
+        assert new_state.current_player == 5                  # player 5 won, leads
+        suits = {a.cards[0].suit for a in new_state.legal_actions if len(a.cards) == 1}
+        assert suits == {Suit.HEARTS, Suit.DIAMONDS, Suit.CLUBS}  # every remaining card leadable
+
+
+def _play(*cards):
+    from shengji.types import Action, ActionType
+    return Action(action_type=ActionType.PLAY_CARDS, cards=tuple(cards))
+
+
+class TestStandingBidWinsWhenAllPass:
+    """If players formally pass and a standing bid exists, that bid's suit is
+    trump. The random kitty fallback applies only when nobody ever bid."""
+
+    def test_standing_two_heart_bid_becomes_trump(self):
+        from shengji.types import Suit, GamePhase, Action, ActionType, TrumpBid
+        game = Game(num_players=6)
+        state = game.reset(dealer_id=0)
+        bid = TrumpBid(count=2, suit=Suit.HEARTS, bidder_id=state.current_player)
+        state, _ = game.step(state, Action(action_type=ActionType.BID_TRUMP, trump_bid=bid))
+        guard = 0
+        while not state.formal_bidding_started and state.phase == GamePhase.DEALING and guard < 300:
+            state, _ = game.step(state, None); guard += 1
+        guard = 0
+        while state.phase == GamePhase.TRUMP_DECLARATION and guard < 20:
+            state, _ = game.step(state, Action(action_type=ActionType.PASS_TRUMP)); guard += 1
+        assert state.trump_suit == Suit.HEARTS
+        assert state.trump_locked is True
+
+
+class TestDealerNeverHelper:
+    """The dealer is the declarer and can never become a helper, even if they
+    hold and play a copy of the called card."""
+
+    def test_dealer_playing_called_card_is_not_helper(self):
+        from shengji.card import Card
+        from shengji.types import Suit, Rank, GamePhase
+        C = Suit.CLUBS
+        game = Game(num_players=6)
+        base = game.reset()
+        state = base.copy(
+            phase=GamePhase.TRICK_PLAYING, dealer_id=2,
+            trump_suit=Suit.HEARTS, trump_level="2",
+            called_rank="K", called_suit=C,
+        )
+        # Dealer (player 2) plays the called card -> still not a helper.
+        helpers, locked = game._update_helpers(state, 2, (Card(C, Rank.KING, 0),))
+        assert helpers == ()
+        assert locked is False
+        # A non-dealer playing it does become helper #1.
+        helpers, locked = game._update_helpers(state, 4, (Card(C, Rank.KING, 1),))
+        assert helpers == (4,)
+
+
+class TestNextGameDealsLikeFirst:
+    """next_game must reuse the card-by-card dealing flow: it returns a fresh
+    DEALING state with empty hands and a full deck, carrying over levels and
+    rotating the dealer (not a pre-dealt, half-initialized state)."""
+
+    def _play_to_scoring(self, game, state):
+        import random
+        from shengji.types import GamePhase
+        guard = 0
+        while state.phase != GamePhase.SCORING and guard < 5000:
+            action = random.choice(state.legal_actions) if state.legal_actions else None
+            state, _ = game.step(state, action)
+            guard += 1
+        assert state.phase == GamePhase.SCORING
+        return state
+
+    def test_next_game_resets_to_fresh_dealing(self):
+        from shengji.types import GamePhase
+        import random
+        random.seed(7)
+        game = Game(num_players=6)
+        state = game.reset(dealer_id=0)
+        scored = self._play_to_scoring(game, state)
+        nxt = game.next_game(scored)
+
+        assert nxt.phase == GamePhase.DEALING
+        # Dealer rotated off player 0.
+        assert nxt.dealer_id != 0
+        # Carries over levels from the finished game.
+        assert nxt.player_levels == scored.player_levels
+        # Trump level reflects the new dealer's level.
+        assert nxt.trump_level == nxt.player_levels[nxt.dealer_id].split(":")[1]
+        # Fresh scores and no trump yet.
+        assert nxt.scores == tuple(0 for _ in range(6))
+        assert nxt.trump_suit is None and nxt.trump_locked is False
+
+    def test_next_game_then_full_deal_keeps_hands_equal(self):
+        # Deal the whole next game out and confirm every player ends with 26
+        # cards before the kitty is taken (no over/under-dealing).
+        from shengji.types import GamePhase
+        import random
+        random.seed(11)
+        game = Game(num_players=6)
+        scored = self._play_to_scoring(game, game.reset(dealer_id=0))
+        state = game.next_game(scored)
+        guard = 0
+        while state.phase == GamePhase.DEALING and guard < 200:
+            state, _ = game.step(state, None)  # auto-deal / no bids
+            guard += 1
+        # After dealing completes, all six hands are equal-sized (26 each).
+        sizes = [len(h) for h in state.hands]
+        assert sizes == [26, 26, 26, 26, 26, 26], sizes

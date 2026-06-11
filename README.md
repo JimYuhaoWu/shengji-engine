@@ -29,7 +29,13 @@ A Python library implementing the complete game logic for 拖拉机 as played by
 ### Known gaps / approximations
 
 - **Solo-helper rule not sealed.** A player who plays 2+ copies of the called card before anyone else should be the *only* helper, but the engine can still add a second helper later.
-- **Trump-hierarchy tractors only half-wired.** Cross-suit hierarchy tractors (e.g. `7♥7♥ + 3♦3♦` when 7 is the level) are recognized when *leading* a trick, but the follow-play generator and trick-winner logic detect tractors per physical suit, so such combos aren't matched/won correctly.
+- **Trump-hierarchy tractors — largely wired as of 2026-06-11.** Following now
+  treats trump as one logical suit (the follow-play generator's "which cards
+  follow" check was fixed this session), and tractor/limo detection plus the
+  trick-winner go through the logical-run detector (`_logical_runs`), so cross-suit
+  hierarchy tractors (e.g. `7♥7♥ + 3♦3♦` when 7 is the level) are recognized on
+  lead and follow. Caveat: cross-suit trump tractor *matching/winning* hasn't been
+  exhaustively tested — treat it as working-but-unverified.
 - **"No helpers when all three called copies are buried"** is not enforced (the dealer isn't prevented from calling a card it holds/buried all copies of). The natural outcome is still "no helpers", so impact is low.
 - **Kitty burial** enumerates all C(32,6) ≈ 906k legal burials — correct but heavy for a UI/agent; could be sampled or pruned.
 
@@ -75,9 +81,11 @@ A Python library implementing the complete game logic for 拖拉机 as played by
 
 ### Call Helper Phase
 - **Dealer calls** a non-trump card (3 identical copies exist)
-- **Helper #1**: First player to play the called card
-- **Helper #2**: Second player to play the called card
-- **Solo helper exception**: If a player plays 2+ copies of the called card (pair or larger combo) BEFORE anyone else plays it, that player becomes the only helper
+- **The dealer is never a helper** — the dealer playing the called card does not
+  make them a helper; their plays are ignored for helper assignment (fixed 2026-06-11)
+- **Helper #1**: First *non-dealer* player to play the called card
+- **Helper #2**: Second *non-dealer* player to play the called card
+- **Solo helper exception**: If a (non-dealer) player plays 2+ copies of the called card (pair or larger combo) BEFORE anyone else plays it, that player becomes the only helper
 - **No helpers**: If all three called cards are buried in the kitty
 
 ### Card Combinations

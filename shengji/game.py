@@ -29,71 +29,28 @@ class Game:
     def next_game(self, current_state: GameState) -> GameState:
         """Start the next game based on the current game's scoring.
 
+        Reuses the same card-by-card dealing + parallel-bidding flow as the very
+        first game (``reset``), carrying over the updated player levels and
+        rotating to the next dealer. (A previous implementation pre-dealt every
+        card and skipped that flow, which broke dealing/bidding and corrupted
+        hand sizes.)
+
         Returns:
             New GameState for the next game with correct dealer and updated levels
         """
         if current_state.phase != GamePhase.SCORING:
             raise ValueError("Can only start next game from SCORING phase")
 
-        # Determine next dealer
         next_dealer = self._determine_next_dealer(current_state)
+        return self.reset(dealer_id=next_dealer, player_levels=current_state.player_levels)
 
-        # Get updated levels from current state
-        new_levels = current_state.player_levels
-
-        # Extract trump level from the level system
-        level_key = new_levels[0]  # All players should have been updated
-        trump_level = level_key.split(":")[1]
-
-        # Deal cards
-        deck = Deck.standard_decks(3)
-        import random
-        random.shuffle(deck)
-
-        hands: List[List[Card]] = [[] for _ in range(6)]
-        for i, card in enumerate(deck[:156]):  # 6 × 26 = 156 cards
-            hands[i % 6].append(card)
-
-        # Remaining 6 cards are kitty
-        kitty = deck[156:162]
-
-        # Convert hands to sorted tuples
-        hands_tuple = tuple(tuple(sorted(hand, key=lambda c: (c.suit.value, c.rank.value))) for hand in hands)
-        kitty_tuple = tuple(kitty)
-
-        # Create initial state for next game
-        state = GameState(
-            phase=GamePhase.DEALING,
-            current_player=0,
-            dealer_id=next_dealer,
-            hands=hands_tuple,
-            kitty=kitty_tuple,
-            trump_suit=None,
-            trump_level=trump_level,
-            trump_locked=False,
-            current_trump_bid=None,
-            passed_players=(),
-            trump_bids_history=(),
-            buried_cards=(),
-            called_rank=None,
-            called_suit=None,
-            helper_players=(),
-            current_trick=(),
-            tricks_won=(),
-            player_levels=new_levels,
-            scores=tuple(0 for _ in range(6)),
-            legal_actions=(),
-        )
-
-        # Generate legal actions for first player
-        legal_actions = self._get_legal_actions(state)
-        return state.copy(legal_actions=legal_actions)
-
-    def reset(self, dealer_id: int = 0) -> GameState:
+    def reset(self, dealer_id: int = 0, player_levels: Optional[Tuple[str, ...]] = None) -> GameState:
         """Start a new game with card-by-card dealing and parallel bidding.
 
         Args:
             dealer_id: which player is the dealer (0-5)
+            player_levels: carried-over level keys (e.g. from a finished game);
+                defaults to everyone at R1:2 for a brand-new match.
 
         Returns:
             Initial GameState in DEALING phase (no cards dealt yet)
@@ -108,11 +65,12 @@ class Game:
         # Keep kitty (last 6 cards) and remaining cards in deck
         deck_tuple = tuple(full_deck)  # All cards start in deck
 
-        # Initialize player levels
-        player_levels = tuple(LEVEL_SEQ[10] for _ in range(6))  # All start at R1:2
+        # Player levels: carried over between games, or all R1:2 for a new match.
+        if player_levels is None:
+            player_levels = tuple(LEVEL_SEQ[10] for _ in range(6))  # All start at R1:2
 
-        # Extract trump level from the level system (all players should have same level in initial setup)
-        level_key = player_levels[0]  # e.g., "R1:2"
+        # Trump level is the DEALER's current level (their side sets the level).
+        level_key = player_levels[dealer_id]  # e.g., "R1:2"
         trump_level = level_key.split(":")[1]  # e.g., "2"
 
         # Create initial state with empty hands and full deck
@@ -349,12 +307,14 @@ class Game:
             # Following a trick - apply following rules
             led_cards = state.current_trick[0][1]
             led_suit = led_cards[0].suit
+            led_is_trump = is_trump(led_cards[0], state.trump_suit, trump_level)
             led_combo_type = self._detect_combination_type(led_cards, state.trump_suit, trump_level)
 
             # Get legal following plays
             legal_plays = self._get_legal_following_plays(
                 player_hand,
                 led_suit,
+                led_is_trump,
                 led_combo_type,
                 len(led_cards),
                 state.trump_suit,
@@ -499,8 +459,15 @@ class Game:
 
             # Check if all players have formally passed
             if len(new_passed) >= 6:
-                # All formally passed - use fallback: trump from kitty
-                trump_suit = self._resolve_trump_from_kitty(state)
+                # All formally passed. The highest standing bid (current_trump_bid)
+                # sets the trump suit. Only when NO bid was ever made do we fall
+                # back to drawing a random non-Joker card from the kitty.
+                if state.current_trump_bid is not None:
+                    trump_suit = state.current_trump_bid.suit
+                    trump_locked = True
+                else:
+                    trump_suit = self._resolve_trump_from_kitty(state)
+                    trump_locked = False
                 new_hands = self._add_kitty_to_dealer_hand(state)
 
                 new_state = state.copy(
@@ -508,6 +475,7 @@ class Game:
                     current_player=state.dealer_id,
                     hands=new_hands,
                     trump_suit=trump_suit,
+                    trump_locked=trump_locked,
                     passed_players=new_passed,
                     kitty=(),  # Clear kitty (cards already in dealer's hand)
                     legal_actions=(),  # Will be set below
@@ -687,7 +655,9 @@ class Game:
                     tricks_won=tricks_won,
                     helper_players=new_helpers,
                     helpers_locked=new_helpers_locked,
-                    legal_actions=self._get_legal_actions_trick_playing(state.copy(hands=tuple(new_hands), current_player=next_player)),
+                    # current_trick=() so the new leader gets LEADING actions, not
+                    # follow-plays restricted to the just-finished trick's led suit.
+                    legal_actions=self._get_legal_actions_trick_playing(state.copy(hands=tuple(new_hands), current_player=next_player, current_trick=())),
                 )
                 return new_state
 
@@ -1094,7 +1064,8 @@ class Game:
             for run_len, _ in self._logical_runs(cards, 3, trump_suit, trump_level)
         )
 
-    def _get_legal_following_plays(self, hand: list, led_suit: Suit, led_combo_type: str, trick_size: int,
+    def _get_legal_following_plays(self, hand: list, led_suit: Suit, led_is_trump: bool,
+                                   led_combo_type: str, trick_size: int,
                                    trump_suit: Suit, trump_level: str) -> List[Tuple[Card, ...]]:
         """Generate all legal plays when following a trick.
 
@@ -1109,7 +1080,14 @@ class Game:
         from itertools import combinations
 
         legal_plays = []
-        led_suit_cards = [c for c in hand if c.suit == led_suit]
+        # "Following suit" works on logical suits: all trumps (jokers, level
+        # cards, 5♥/5♦, Captain/Lieutenant, trump-suit cards) form ONE suit, and
+        # a non-trump lead only obliges non-trump cards of that physical suit.
+        if led_is_trump:
+            follows = lambda c: is_trump(c, trump_suit, trump_level)
+        else:
+            follows = lambda c: c.suit == led_suit and not is_trump(c, trump_suit, trump_level)
+        led_suit_cards = [c for c in hand if follows(c)]
 
         if led_suit_cards:
             # Has led suit cards - must follow suit
@@ -1230,7 +1208,7 @@ class Game:
 
             # If insufficient led suit cards - play all + fill with any other cards
             if not legal_plays and len(led_suit_cards) < trick_size:
-                other_cards = [c for c in hand if c.suit != led_suit]
+                other_cards = [c for c in hand if not follows(c)]
                 needed = trick_size - len(led_suit_cards)
                 if len(other_cards) >= needed:
                     for other_combo in combinations(other_cards, needed):
@@ -1303,7 +1281,9 @@ class Game:
 
         Returns ``(helper_players, helpers_locked)``.
         Rules:
-        - First player to play the called card becomes helper #1.
+        - The dealer can NEVER be a helper (helpers are the dealer's partners);
+          the dealer playing the called card does not make them a helper.
+        - First (non-dealer) player to play the called card becomes helper #1.
         - The second *different* player to play it becomes helper #2 (which then
           locks the set).
         - If a player plays 2+ copies of the called card BEFORE anyone else has
@@ -1314,6 +1294,10 @@ class Game:
         locked = state.helpers_locked
 
         if locked or not state.called_rank or not state.called_suit:
+            return helpers, locked
+
+        # The dealer is the declarer, not a helper — ignore their plays here.
+        if player_id == state.dealer_id:
             return helpers, locked
 
         called_card_count = sum(

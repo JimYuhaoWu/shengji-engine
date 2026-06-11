@@ -265,9 +265,12 @@ Examples (in order of strength):
 - Since three decks exist, there are exactly three identical copies of the called card
 
 **Helper Determination (during TRICK_PLAYING):**
-1. The first player to play the called card becomes helper #1
-2. The second player to play the called card becomes helper #2
-3. **Special rule:** If a player plays 2+ copies of the called card (as a pair or part of a larger combination) BEFORE any other player has played the called card, that player becomes the ONLY helper (no second helper)
+0. **The dealer can NEVER be a helper.** Helpers are the dealer's partners, so the
+   dealer playing the called card (e.g. from a copy they were dealt) does not make
+   them a helper — those plays are ignored for helper assignment.
+1. The first *non-dealer* player to play the called card becomes helper #1
+2. The second *non-dealer* player to play the called card becomes helper #2
+3. **Special rule:** If a (non-dealer) player plays 2+ copies of the called card (as a pair or part of a larger combination) BEFORE any other player has played the called card, that player becomes the ONLY helper (no second helper)
 4. **Edge case:** If all three copies are buried in the kitty (dealer swapped them out), there are no helpers for that round
 
 **Helper Reveal:**
@@ -376,3 +379,52 @@ def test_legal_actions_never_empty_mid_game():
 5. `game.py` (full state machine) + integration tests
 
 Do not proceed to step N+1 until tests for step N all pass.
+
+## Session Log — 2026-06-11 (live-playtest bug fixes)
+
+A human-vs-5-AI playtest surfaced several engine bugs. All fixed in `game.py`
+with regression tests in `tests/test_game.py` (suite now 189 passing). If you
+are catching up, these are the behaviors to keep in mind:
+
+1. **Follow-suit treats trump as ONE logical suit.** `_get_legal_following_plays`
+   now takes a `led_is_trump` flag. When the lead is trump (a Joker, any level
+   card, 5♥/5♦, Captain/Lieutenant, or a trump-suit card), *every* trump in hand
+   "follows suit"; when a plain suit is led, only the non-trump cards of that
+   physical suit follow. Previously it compared the led card's literal `.suit`,
+   so a Joker lead only let you follow with Jokers, and an off-suit level card
+   (e.g. 2♠ when ♥2 is trump) was mis-read as a spades lead.
+
+2. **New trick leader gets LEADING actions, not stale follow-plays.** When a
+   trick completes, the next leader's `legal_actions` are now computed with
+   `current_trick=()`. Before, the just-finished trick leaked in, so the leader
+   was restricted to the previous trick's led suit (often "trump only").
+
+3. **A standing trump bid wins when everyone passes.** `_handle_pass_trump`: if
+   `current_trump_bid` exists when all 6 pass, that bid's suit becomes trump and
+   trump locks. The random-kitty fallback (`_resolve_trump_from_kitty`) now fires
+   only when *no* bid was ever made. Before, a 2♥ bid that nobody beat was thrown
+   away and a random kitty suit was chosen.
+
+4. **The dealer can never be a helper.** `_update_helpers` ignores plays by
+   `dealer_id` (helpers are the dealer's partners). See the Call Helper section.
+
+5. **`next_game` reuses the real dealing flow.** It now calls
+   `reset(dealer_id=next_dealer, player_levels=...)` instead of pre-dealing all
+   156 cards into a half-initialized state. `reset` gained an optional
+   `player_levels` arg and now derives `trump_level` from the **dealer's** level
+   (not player 0's). This fixes the next hand not starting like the first and the
+   corrupted/unequal hand sizes that followed.
+
+### Known issues / planned work (NOT yet done)
+
+- **KITTY still enumerates C(32,6) ≈ 906k legal actions** even though every
+  6-card bury is valid. This is wasted work the serializer just discards. Plan:
+  skip legal-action generation for KITTY and validate a submitted bury directly
+  as a **sub-multiset** of the dealer's hand (6 cards; duplicates allowed up to
+  the count actually held). See shengji-server `_bury_is_valid`.
+- **Multi-card throws (甩牌) on the lead are not supported.** `get_card_combinations`
+  only emits clean single/pair/trio/tractor/limo. Planned: a staged *validator*
+  (validate the submitted play instead of enumerating) — Stage 1 logical-suit
+  check, Stage 2 type detection, Stage 3 multi-throw with a throw-success/penalty
+  rule resolved at play time using other players' hands. Lead and follow need
+  separate branches. Keep a bounded candidate generator for AI move selection.
